@@ -1,0 +1,34 @@
+[package]
+name = "amm-cli"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+devnet = ["raydium_amm/devnet"]
+
+[dependencies]
+anchor-client = {workspace = true}
+anchor-lang = {workspace = true}
+serum_dex = { path = "../serum_dex" }
+raydium_amm = { path = "../amm", default-features = false, features = [
+    "client",
+    "no-entrypoint",
+] }
+common = { path = "../common" }
+#spl-token = { version = "=4.0.0", features = ["no-entrypoint"] }
+spl-associated-token-account = { workspace = true, features = [
+    "no-entrypoint",
+] }
+#spl-token-2022 = { version = "=0.9.0", features = ["no-entrypoint"] }
+solana-client = {workspace = true}
+solana-sdk = {workspace = true}
+anyhow = "1.0.53"
+safe-transmute = "0.11.2"
+arrayref = "0.3.6"
+clap = { version = "4.1.8", features = ["derive"] }
+toml = "0.8.19"
+hex = "0.4.3"
+bs58 = { version = "0.5.1" }
+
+[lib]
+crate-type = ["cdylib", "lib"]
