@@ -1,63 +1,54 @@
 use crate::cmd::InternalCommand;
 use crate::constant::{get_keypair, pg_conn, solana_rpc_client, BLOX_HEADER, PUMP_MIGRATION, RAYDIUM_V4_AUTHORITY, RAYDIUM_V4_PROGRAM, SOLANA_GRPC_URL, SOLANA_MINT_STR, SOLANA_RPC_URL};
+use crate::implement_diesel;
+use crate::position::PositionConfig;
 use crate::price::{Price, PriceBuilder};
-use crate::util::Chan;
 use anyhow::anyhow;
 use base64::prelude::BASE64_STANDARD;
 use base64::Engine;
+use chrono::{DateTime, Utc};
+use diesel::backend::Backend;
+use diesel::deserialize::FromSql;
+use diesel::dsl::count_star;
+use diesel::prelude::*;
+use diesel::serialize::{Output, ToSql};
+use diesel::sql_types::Integer;
+use diesel::{deserialize, serialize, AsChangeset, AsExpression, FromSqlRow, Identifiable, Insertable, Queryable, Selectable};
+use diesel_async::pooled_connection::deadpool::Object;
+use diesel_async::pooled_connection::AsyncDieselConnectionManager;
+use diesel_async::{AsyncConnection, AsyncPgConnection, RunQueryDsl};
 use futures::future::{select_all, SelectAll};
-use futures::{pin_mut, FutureExt, SinkExt, StreamExt};
+use futures::{FutureExt, SinkExt, StreamExt};
 use jito_sdk_rust::JitoJsonRpcSDK;
 use log::{error, info, warn};
 use raydium_amm::instruction::swap_base_out;
 use raydium_amm::instruction::AmmInstruction::Initialize2;
 use raydium_amm::log::{decode_ray_log, InitLog, LogType, SwapBaseInLog, SwapBaseOutLog};
 use raydium_amm::math::SwapDirection;
+use raydium_amm::solana_program::native_token::{sol_to_lamports, LAMPORTS_PER_SOL};
 use reqwest::Client;
+use rust_decimal::prelude::ToPrimitive;
+use rust_decimal::{Decimal, MathematicalOps};
 use rust_decimal_macros::dec;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_client::rpc_config::{RpcSendTransactionConfig, RpcTransactionConfig};
 use solana_client::tpu_client::TpuClient;
 use solana_sdk::commitment_config::CommitmentConfig;
+use solana_sdk::compute_budget::ComputeBudgetInstruction;
 use solana_sdk::instruction::{AccountMeta, Instruction};
 use solana_sdk::message::VersionedMessage;
 use solana_sdk::pubkey::Pubkey;
+use solana_sdk::signature::{Keypair, Signature};
 use solana_sdk::signer::Signer;
 use solana_sdk::transaction::Transaction;
 use solana_transaction_status::UiTransactionEncoding;
+use spl_associated_token_account_client::address::get_associated_token_address_with_program_id;
 use std::cmp::{max, min};
 use std::collections::{HashMap, HashSet};
 use std::pin::pin;
 use std::str::FromStr;
-use chrono::{DateTime, Utc};
-use diesel::{deserialize, serialize, AsChangeset, AsExpression, FromSqlRow, Identifiable, Insertable, Queryable, Selectable};
-use diesel::backend::Backend;
-use diesel::deserialize::FromSql;
-use diesel::serialize::{Output, ToSql};
-use diesel::sql_types::Integer;
-use diesel::dsl::count_star;
-use diesel::prelude::*;
-use diesel_async::pooled_connection::deadpool::Object;
-use diesel_async::pooled_connection::AsyncDieselConnectionManager;
-use diesel_async::{AsyncConnection, AsyncPgConnection, RunQueryDsl};
-use rust_decimal::{Decimal, MathematicalOps};
-use rust_decimal::prelude::ToPrimitive;
-use serde::{Deserialize, Serialize};
-use solana_sdk::compute_budget::ComputeBudgetInstruction;
-use solana_sdk::signature::{Keypair, Signature};
-use spl_associated_token_account_client::address::get_associated_token_address_with_program_id;
-use yellowstone_grpc_proto::geyser::subscribe_update::UpdateOneof;
-use yellowstone_grpc_proto::geyser::{
-    SubscribeRequest, SubscribeRequestFilterAccounts, SubscribeRequestFilterBlocksMeta,
-    SubscribeRequestFilterTransactions,
-};
-use yellowstone_grpc_proto::prelude::subscribe_request_filter_accounts_filter::Filter;
-use yellowstone_grpc_proto::prelude::SubscribeRequestFilterAccountsFilter;
-use yellowstone_grpc_proto::prost::Message;
-use raydium_amm::solana_program::native_token::{sol_to_lamports, LAMPORTS_PER_SOL};
-use crate::implement_diesel;
-use crate::position::PositionConfig;
 
 #[derive(Queryable, Selectable, Insertable, AsChangeset, Identifiable)]
 #[diesel(table_name = crate::schema::trades)]
@@ -225,16 +216,16 @@ impl Trade {
         let coin_mint = self.coin_mint();
         let pc_mint = self.pc_mint();
         let amm = self.amm();
-        let coin_tk = get_associated_token_address_with_program_id(
-            &pubkey,
-            &coin_mint,
-            &token_program_id,
-        );
-        let pc_tk = get_associated_token_address_with_program_id(
-            &pubkey,
-            &pc_mint,
-            &token_program_id,
-        );
+        // let coin_tk = get_associated_token_address_with_program_id(
+        //     &pubkey,
+        //     &coin_mint,
+        //     &token_program_id,
+        // );
+        // let pc_tk = get_associated_token_address_with_program_id(
+        //     &pubkey,
+        //     &pc_mint,
+        //     &token_program_id,
+        // );
         let wsol = get_associated_token_address_with_program_id(
             &pubkey,
             &self.sol_mint(),

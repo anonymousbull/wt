@@ -1,18 +1,12 @@
-use log::info;
-use rust_decimal::Decimal;
-use serde::{Deserialize, Serialize};
-use solana_sdk::account::Account;
-use tokio::sync::mpsc::Receiver;
-use crate::cmd::InternalCommand;
 use crate::constant::pg_conn;
 use crate::implement_diesel;
-use crate::util::Chan;
 use diesel::dsl::count_star;
 use diesel::prelude::*;
 use diesel_async::pooled_connection::deadpool::Object;
-use diesel_async::pooled_connection::AsyncDieselConnectionManager;
-use diesel_async::{AsyncConnection, AsyncPgConnection, RunQueryDsl};
+use diesel_async::RunQueryDsl;
 use raydium_amm::solana_program::native_token::LAMPORTS_PER_SOL;
+use rust_decimal::Decimal;
+use serde::{Deserialize, Serialize};
 
 #[derive(Queryable, Selectable, Insertable, AsChangeset, Identifiable)]
 #[diesel(table_name = crate::schema::prices)]
@@ -35,10 +29,10 @@ pub struct PriceBuilder {
 }
 
 impl PriceBuilder {
-    pub fn build(self, id:i64, pool_id:String) -> Price {
+    pub fn build(self, id:i64, trade_id:String) -> Price {
         Price {
             id,
-            pool_id,
+            trade_id,
             price: self.price,
             tvl: self.tvl,
         }

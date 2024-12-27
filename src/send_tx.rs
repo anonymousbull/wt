@@ -11,7 +11,7 @@ use crate::trade::{TradeRequest, TradeResponse, TradeState};
 pub async fn send_tx(mut req: TradeRequest) -> anyhow::Result<TradeResponse> {
     let rpc = solana_rpc_client();
     let start_time = ::std::time::Instant::now();
-    let jito_sdk = JitoJsonRpcSDK::new("https://mainnet.block-engine.jito.wtf/api/v1", None);
+    // let jito_sdk = JitoJsonRpcSDK::new("https://mainnet.block-engine.jito.wtf/api/v1", None);
 
     let tx = Transaction::new_signed_with_payer(
         &req.instructions,
@@ -78,7 +78,6 @@ pub async fn send_tx(mut req: TradeRequest) -> anyhow::Result<TradeResponse> {
     //     .await?;
     // info!("signature {siga} {:?}", start_time.elapsed());
 
-    let elapsed_time = start_time.elapsed();
     info!("Confirmed trade sent tx: {:?}", start_time.elapsed());
     //
 

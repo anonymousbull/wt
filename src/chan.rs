@@ -280,10 +280,10 @@ pub async fn trade_chan(chan: Chan) {
                                         trades.iter().for_each(|(id,trade)| {
                                             chan.bg.try_send(InternalCommand::UpdateTrade(trade.clone())).unwrap();
                                             if TradeState::PositionClosed == trade.state {
-                                                removes.push(id);
+                                                removes.push(id.clone());
                                             }
                                         });
-                                        removes.iter().for_each(|&id| {
+                                        removes.iter().for_each(|id| {
                                             trades.remove(id);
                                         });
                                     }
