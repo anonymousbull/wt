@@ -8,7 +8,7 @@ async fn main() {
         .format_timestamp_millis()
         .init();
 
-    // raydium_amm::log::decode_ray_log("AwASegAAAAAAAIhSanQAAAABAAAAAAAAAICWmAAAAAAAaDy0k00AAADAKw8ZIwAAAKQfDQEAAAAA");
+    raydium_amm::log::decode_ray_log("Alh4A5VLFQcAWHgDlUsVBwCInOJavHfuY6VQ+YmAAAAAWEKe0EsVBwAANHZmewAAAAAAAAAAAAAAAABuZ0NaFWgAAAAAAAAAAAeCzW9zdO5j/xb1iYAAAAA=");
     // raydium_amm::log::decode_ray_log("BO2eLLAAAAAAJH/wjAAAAAABAAAAAAAAAICWmAAAAAAA+AYIVWGkYgKgtLhGxAAAAGwtAAAAAAAA");
     solana_sdk::pubkey::Pubkey::from_str_const("So11111111111111111111111111111111111111112");
     let (bg_send, bg_r) = tokio::sync::mpsc::channel::<InternalCommand>(100);

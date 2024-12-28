@@ -1,29 +1,33 @@
-use std::cmp::{max, min};
-use std::collections::HashMap;
-use std::str::FromStr;
-use std::time::Duration;
-use base64::Engine;
+use crate::cmd::InternalCommand;
+use crate::constant::{
+    get_keypair, pg_conn, solana_rpc_client, RAYDIUM_V4_AUTHORITY, RAYDIUM_V4_PROGRAM,
+    SOLANA_ATA_PROGRAM, SOLANA_GRPC_URL, SOLANA_MINT, SOLANA_RENT_PROGRAM, SOLANA_SERUM_PROGRAM,
+    SOLANA_SYSTEM_PROGRAM,
+};
+use crate::position::PositionConfig;
+use crate::price::{get_price_tvl, Price};
+use crate::send_tx::send_tx;
+use crate::trade::{Trade, TradeState};
+use anyhow::anyhow;
 use base64::prelude::BASE64_STANDARD;
+use base64::Engine;
 use chrono::Utc;
 use futures::StreamExt;
 use log::{error, info, warn};
+use raydium_amm::log::{InitLog, SwapBaseInLog, SwapBaseOutLog, WithdrawLog};
+use raydium_amm::math::SwapDirection;
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Signature;
 use solana_sdk::signer::Signer;
+use std::cmp::{max, min};
+use std::collections::HashMap;
+use std::str::FromStr;
 use tokio::sync::mpsc::Receiver;
 use tokio::time::Instant;
-use yellowstone_grpc_proto::geyser::{SubscribeRequest, SubscribeRequestFilterTransactions};
 use yellowstone_grpc_proto::geyser::subscribe_update::UpdateOneof;
-use raydium_amm::log::{InitLog, SwapBaseInLog, SwapBaseOutLog};
-use raydium_amm::math::SwapDirection;
-use crate::cmd::InternalCommand;
-use crate::constant::{get_keypair, pg_conn, solana_rpc_client, RAYDIUM_V4_PROGRAM, SOLANA_GRPC_URL};
-use crate::position::PositionConfig;
-use crate::price::{get_price_tvl, Price};
-use crate::send_tx::send_tx;
-use crate::trade::{Trade, TradeState};
+use yellowstone_grpc_proto::geyser::{SubscribeRequest, SubscribeRequestFilterTransactions};
 
 #[derive(Clone)]
 pub struct Chan {
@@ -38,10 +42,7 @@ pub struct Chan {
     pub trade: tokio::sync::mpsc::Sender<InternalCommand>,
 }
 
-
-pub async fn bg_chan(
-    mut rec: Receiver<InternalCommand>,
-){
+pub async fn bg_chan(mut rec: Receiver<InternalCommand>) {
     let pg = pg_conn().await;
     let mut c = pg.get().await.unwrap();
     let mut insert_prices = Vec::<Price>::new();
@@ -61,8 +62,7 @@ pub async fn bg_chan(
             InternalCommand::UpdateTrade(trade) => {
                 update_trades.insert(trade.id.clone(), trade);
                 let trades = update_trades.values().cloned().collect::<Vec<_>>();
-                info!("straight up updating db {:?}", trades);
-
+                info!("straight up updating db {:?}", trades[0].state);
                 Trade::upsert_bulk(&mut c, trades).await.unwrap();
                 update_trades.clear();
             }
@@ -82,7 +82,7 @@ pub async fn bg_chan(
 /// pool init - https://solscan.io/token/W2tX3GxsVH6Jng4UfaaUkgsHqU1c1sTeTaiAG4Npump?time=1735321560000&time=1735321679000&page=5#defiactivities
 /// pool swap - https://solscan.io/tx/SggjhnEzULzofBb6njNaaFP7T31z6uddrx2ibafA6FhpQxuifEoYh2WiRWgg5geysqRkiAuhS7esgDMxLxtmTp5
 /// SwapBaseOutLog { log_type: 4, max_in: 2955714285, amount_out: 2364571428, direction: 1, user_source: 10000000, pool_coin: 171880473738872568, pool_pc: 843000100000, deduct_in: 11628 }
-pub async fn trade_chan(chan: Chan, mut rec:Receiver<InternalCommand>) {
+pub async fn trade_chan(chan: Chan, mut rec: Receiver<InternalCommand>) {
     let pg = pg_conn().await;
     let mut c = pg.get().await.unwrap();
     let kp = get_keypair();
@@ -95,10 +95,10 @@ pub async fn trade_chan(chan: Chan, mut rec:Receiver<InternalCommand>) {
         .filter(|x| x.exit_time.is_none())
         .map(|x| (x.id.clone(), x))
         .collect::<HashMap<_, _>>();
-    info!("active trades {}",trades.len());
+    info!("active trades {}", trades.len());
     let cfg = PositionConfig {
-        min_sol: dec!(0.008),
-        max_sol: dec!(0.01),
+        min_sol: dec!(0.08),
+        max_sol: dec!(0.1),
         fee: dec!(0.00203928),
         jito: dec!(0.001),
         close_trade_fee: dec!(0.00203928),
@@ -118,35 +118,30 @@ pub async fn trade_chan(chan: Chan, mut rec:Receiver<InternalCommand>) {
                 account_required: vec![RAYDIUM_V4_PROGRAM.to_string()],
             },
         )]
-            .into_iter()
-            .collect(),
+        .into_iter()
+        .collect(),
         ..Default::default()
     };
 
-    // let mut ar = Vec::new();
-    // loop {
-    //     if ar.is_empty() {
-    //         ar.push(async{}.boxed());
-    //     }
-    //     let (res, idx, remaining_futures) = select_all(ar).await;
-    //     ar = remaining_futures;
-    // }
-
     let (_subscribe_tx, mut stream) = c.subscribe_with_request(Some(r.clone())).await.unwrap();
 
-    let mut trade_time = Instant::now();
+    let mut heartbeat = Instant::now();
 
-    let mut a = false;
     while let Some(message) = stream.next().await {
+        if heartbeat.elapsed().as_secs() > 60 {
+            info!("heartbeat {:?}", heartbeat.elapsed());
+            heartbeat = Instant::now();
+        }
 
         if let Ok(cmd) = rec.try_recv() {
             match cmd {
                 InternalCommand::StopWatchTrade(trade) => {
                     info!("discarding trade");
                     trades.remove(&trade.id);
-                    chan.bg.try_send(InternalCommand::StopWatchTrade(trade)).unwrap();
+                    chan.bg
+                        .try_send(InternalCommand::StopWatchTrade(trade))
+                        .unwrap();
                     info!("trades now {}", trades.len());
-                    a = true;
                 }
                 _ => {}
             }
@@ -154,9 +149,6 @@ pub async fn trade_chan(chan: Chan, mut rec:Receiver<InternalCommand>) {
 
         let is_trading = trades.len() < max_positions;
         if let Ok(m) = message {
-            // if a {
-            //     info!("looping");
-            // }
             if let Some(update) = m.update_oneof {
                 if let UpdateOneof::Transaction(v) = &update {
                     if let Some(t) = &v.transaction {
@@ -168,16 +160,20 @@ pub async fn trade_chan(chan: Chan, mut rec:Receiver<InternalCommand>) {
                                         .iter()
                                         .map(|a| Pubkey::try_from(a.as_slice()).unwrap())
                                         .collect::<Vec<_>>();
-                                    let watch_trade = accounts
-                                        .iter()
-                                        .find_map(|x| trades.get(&x.to_string()));
-                                    if watch_trade.is_some() && meta.log_messages.iter().any(|x| x.contains(&"ray_log".to_string())) {
+                                    let watch_trade =
+                                        accounts.iter().find_map(|x| trades.get(&x.to_string()));
+                                    if watch_trade.is_some()
+                                        && meta
+                                            .log_messages
+                                            .iter()
+                                            .any(|x| x.contains(&"ray_log".to_string()))
+                                    {
                                         let mut trade = watch_trade.unwrap().clone();
 
                                         let sig = solana_sdk::signature::Signature::try_from(
                                             t.signature.as_slice(),
                                         )
-                                            .unwrap();
+                                        .unwrap();
 
                                         let log = meta
                                             .log_messages
@@ -187,14 +183,32 @@ pub async fn trade_chan(chan: Chan, mut rec:Receiver<InternalCommand>) {
                                         let log = log.replace("Program log: ray_log: ", "");
 
                                         let swap_in = bincode::deserialize::<SwapBaseInLog>(
-                                            &BASE64_STANDARD.decode(log.clone()).unwrap(),
-                                        );
+                                            &BASE64_STANDARD.decode(&log).unwrap(),
+                                        )
+                                        .map_err(anyhow::Error::from)
+                                        .and_then(|x| {
+                                            if x.direction > 2 {
+                                                Err(anyhow::format_err!("wrong direction"))
+                                            } else {
+                                                Ok(x)
+                                            }
+                                        });
                                         let swap_out = bincode::deserialize::<SwapBaseOutLog>(
-                                            &BASE64_STANDARD.decode(log).unwrap(),
+                                            &BASE64_STANDARD.decode(&log).unwrap(),
+                                        )
+                                        .map_err(anyhow::Error::from)
+                                        .and_then(|x| {
+                                            if x.direction > 2 {
+                                                Err(anyhow::format_err!("wrong direction"))
+                                            } else {
+                                                Ok(x)
+                                            }
+                                        });
+                                        let withdraw = bincode::deserialize::<WithdrawLog>(
+                                            &BASE64_STANDARD.decode(&log).unwrap(),
                                         );
 
-
-                                        let (pc, coin,amount_out) = if let Ok(swap) = &swap_in {
+                                        let (pc, coin, amount_out) = if let Ok(swap) = &swap_in {
                                             if swap.direction == SwapDirection::PC2Coin as u64 {
                                                 // info!("swap_base_in: pc2coin");
                                                 // info!(
@@ -203,7 +217,7 @@ pub async fn trade_chan(chan: Chan, mut rec:Receiver<InternalCommand>) {
                                                 // );
                                                 let pc = swap.pool_pc + swap.amount_in;
                                                 let coin = swap.pool_coin - swap.out_amount;
-                                                (pc, coin,Some(swap.out_amount))
+                                                (pc, coin, Some(swap.out_amount))
                                             } else {
                                                 // info!("swap_base_in: coin2pc");
                                                 // info!(
@@ -212,7 +226,7 @@ pub async fn trade_chan(chan: Chan, mut rec:Receiver<InternalCommand>) {
                                                 // );
                                                 let coin = swap.pool_coin + swap.amount_in;
                                                 let pc = swap.pool_pc - swap.out_amount;
-                                                (pc, coin,Some(swap.out_amount))
+                                                (pc, coin, Some(swap.out_amount))
                                             }
                                         } else if let Ok(swap) = &swap_out {
                                             if swap.direction == 1 {
@@ -223,7 +237,7 @@ pub async fn trade_chan(chan: Chan, mut rec:Receiver<InternalCommand>) {
                                                 // );
                                                 let pc = swap.pool_pc + swap.max_in;
                                                 let coin = swap.pool_coin - swap.deduct_in;
-                                                (pc, coin,None)
+                                                (pc, coin, None)
                                             } else {
                                                 // info!("swap_base_out: coin2pc");
                                                 // info!(
@@ -232,8 +246,13 @@ pub async fn trade_chan(chan: Chan, mut rec:Receiver<InternalCommand>) {
                                                 // );
                                                 let coin = swap.pool_coin + swap.max_in;
                                                 let pc = swap.pool_pc - swap.deduct_in;
-                                                (pc, coin,None)
+                                                (pc, coin, None)
                                             }
+                                        } else if let Ok(withdraw) = withdraw {
+                                            error!("RUGGED");
+                                            let coin = withdraw.pool_coin - withdraw.out_coin;
+                                            let pc = withdraw.pool_pc - withdraw.out_pc;
+                                            (pc, coin, None)
                                         } else {
                                             unreachable!()
                                         };
@@ -245,48 +264,76 @@ pub async fn trade_chan(chan: Chan, mut rec:Receiver<InternalCommand>) {
                                             token_amount,
                                             trade.decimals as u8,
                                         );
-                                        let price =
-                                            trade_price_builder.build(price_id, trade.id.clone()).price;
+                                        let price = trade_price_builder
+                                            .build(price_id, trade.id.clone())
+                                            .price;
 
                                         if TradeState::PositionPendingFill == trade.state {
-                                            if &sig.to_string() == trade.tx_in_id.as_ref().unwrap() {
+                                            if &sig.to_string() == trade.tx_in_id.as_ref().unwrap()
+                                            {
                                                 trade.entry_time = Some(Utc::now());
                                                 trade.entry_price = Some(price);
                                                 trade.state = TradeState::PositionFilled;
                                                 trade.amount = Decimal::from(amount_out.unwrap());
                                                 trades.insert(trade.id.clone(), trade.clone());
+                                                info!(
+                                                    "please look at this! {:?}",
+                                                    m.account_keys.len()
+                                                );
+                                                info!("please look at this! {:?}", accounts);
+                                                m.instructions.iter().enumerate().for_each(
+                                                    |(u, zz)| {
+                                                        info!("instruction {u}");
+                                                        info!(
+                                                            "instruction account len {}",
+                                                            zz.accounts.len()
+                                                        );
+                                                        info!("{:?}", zz.accounts);
+                                                    },
+                                                );
                                                 info!("position filled {:?}", trade);
                                             }
                                         } else if TradeState::PositionFilled == trade.state {
                                             let entry_price = trade.entry_price.unwrap();
-                                            trade.pct = (price - entry_price) / entry_price * dec!(100);
-                                            info!("trade:id-pct-price {} {} {}",trade.id,trade.pct,price);
-                                            info!("swap_in {:?}",swap_in);
-                                            info!("sig {:?}",sig);
-                                            info!("swap_out {:?}",swap_out);
+                                            trade.pct =
+                                                (price - entry_price) / entry_price * dec!(100);
+                                            info!("price {}", price);
+                                            info!("pct {}", trade.pct);
+                                            info!("trade:id {}", trade.id);
+                                            info!("sig {:?}", sig);
+                                            info!("swap_in {:?}", swap_in);
+                                            info!("swap_out {:?}", swap_out);
                                             trades.insert(trade.id.clone(), trade.clone());
 
-                                            // trades.insert(trade.id.clone(), trade);
-
                                             if trade.pct > dec!(20) || trade.pct < dec!(-3) {
-                                                let trade_req = trade.create_position(
-                                                    price,
-                                                    cfg,
-                                                    false
-                                                );
+                                                let trade_req =
+                                                    trade.create_position(price, cfg, false);
 
                                                 warn!("spamming close");
-                                                match send_tx(trade_req).await  {
+                                                match send_tx(trade_req).await {
                                                     Ok(trade_res) => {
                                                         let mut trade = trade_res.trade;
-                                                        trade.state = TradeState::PositionPendingClose;
-                                                        let sig = Signature::from_str(trade_res.sig.as_str()).unwrap();
+                                                        trade.state =
+                                                            TradeState::PositionPendingClose;
+                                                        let sig = Signature::from_str(
+                                                            trade_res.sig.as_str(),
+                                                        )
+                                                        .unwrap();
                                                         trade.tx_out_id = Some(trade_res.sig);
                                                         tokio::spawn(async move {
                                                             let rpc = solana_rpc_client();
-                                                            rpc.poll_for_signature(&sig).await.unwrap();
-                                                            let res = rpc.get_signature_status(&sig).await.unwrap().unwrap();
-                                                            info!("create close position result {:?}",res);
+                                                            rpc.poll_for_signature(&sig)
+                                                                .await
+                                                                .unwrap();
+                                                            let res = rpc
+                                                                .get_signature_status(&sig)
+                                                                .await
+                                                                .unwrap()
+                                                                .unwrap();
+                                                            info!(
+                                                                "create close position result {:?}",
+                                                                res
+                                                            );
                                                         });
                                                         trades.insert(trade.id.clone(), trade);
                                                     }
@@ -295,28 +342,26 @@ pub async fn trade_chan(chan: Chan, mut rec:Receiver<InternalCommand>) {
                                                     }
                                                 };
                                             }
-                                        }
-
-                                        else if TradeState::PositionPendingClose == trade.state {
-                                            if accounts.iter().any(|x|x == &pubkey) {
+                                        } else if TradeState::PositionPendingClose == trade.state {
+                                            if accounts.iter().any(|x| x == &pubkey) {
                                                 info!("why");
                                                 trade.state = TradeState::PositionClosed;
                                                 trade.exit_time = Some(Utc::now());
                                                 trade.exit_price = Some(price);
                                                 trades.insert(trade.id.clone(), trade.clone());
                                                 info!("closed {trade:?}");
-
                                             }
                                         }
 
-                                        trades.clone().iter().for_each(|(id,trade)| {
+                                        trades.clone().iter().for_each(|(id, trade)| {
                                             if TradeState::PositionClosed == trade.state {
                                                 trades.remove(id);
                                             }
                                             info!("we are attempting to update database");
-                                            let r = chan.bg.try_send(InternalCommand::UpdateTrade(trade.clone()));
-                                            info!("updating db res {:?}",r);
-
+                                            let r = chan.bg.try_send(InternalCommand::UpdateTrade(
+                                                trade.clone(),
+                                            ));
+                                            info!("updating db res {:?}", r);
                                         });
                                     }
                                 }
@@ -324,44 +369,75 @@ pub async fn trade_chan(chan: Chan, mut rec:Receiver<InternalCommand>) {
 
                             if is_trading
                                 && meta
-                                .log_messages
-                                .iter()
-                                .any(|z| z.contains("init_pc_amount"))
+                                    .log_messages
+                                    .iter()
+                                    .any(|z| z.contains("init_pc_amount"))
                             {
                                 info!("found");
 
                                 if let Some(tx) = &t.transaction {
                                     if let Some(m) = &tx.message {
-                                        let accounts = m
-                                            .instructions
-                                            .iter()
-                                            .find_map(|x| {
-                                                if x.accounts.len() == 21
-                                                    // suspect 22 from testing
-                                                    // maybe 1 includes 4v program id
-                                                    && m.account_keys.len() >= 21
-                                                {
-                                                    Some(
-                                                        x.accounts
-                                                            .iter()
-                                                            .map(|&index| {
-                                                                Pubkey::try_from(
-                                                                    m.account_keys[index as usize]
-                                                                        .as_slice(),
-                                                                )
-                                                                    .unwrap()
-                                                            })
-                                                            .collect::<Vec<_>>(),
-                                                    )
+                                        let accounts = m.instructions.iter().find_map(|x| {
+                                            if x.accounts.len() == 21 {
+                                                let keys_maybe = x
+                                                    .accounts
+                                                    .iter()
+                                                    .filter_map(|&index| {
+                                                        m.account_keys.get(index as usize)
+                                                    })
+                                                    .map(|x| Pubkey::try_from(x.as_slice()))
+                                                    .map(Result::unwrap)
+                                                    .collect::<Vec<_>>();
+
+                                                if keys_maybe.len() != 21 {
+                                                    return None;
+                                                }
+
+                                                let mut has_system_program = false;
+                                                let mut has_rent_program = false;
+                                                let mut has_wsol_mint = false;
+                                                let mut has_serum_program = false;
+                                                let mut has_ray_auth_program = false;
+                                                let mut has_token_program = false;
+                                                let mut has_ata_program = false;
+                                                for x in &keys_maybe {
+                                                    if x == &SOLANA_SYSTEM_PROGRAM {
+                                                        has_system_program = true
+                                                    } else if x == &SOLANA_RENT_PROGRAM {
+                                                        has_rent_program = true
+                                                    } else if x == &SOLANA_MINT {
+                                                        has_wsol_mint = true
+                                                    } else if x == &SOLANA_SERUM_PROGRAM {
+                                                        has_serum_program = true
+                                                    } else if x == &RAYDIUM_V4_AUTHORITY {
+                                                        has_ray_auth_program = true
+                                                    } else if x == &spl_token::id()
+                                                        || x == &spl_token_2022::id()
+                                                    {
+                                                        has_token_program = true
+                                                    } else if x == &SOLANA_ATA_PROGRAM {
+                                                        has_ata_program = true
+                                                    }
+                                                }
+                                                let all_good = has_system_program
+                                                    && has_ray_auth_program
+                                                    && has_rent_program
+                                                    && has_wsol_mint
+                                                    && has_serum_program
+                                                    && has_ray_auth_program
+                                                    && has_token_program
+                                                    && has_ata_program;
+
+                                                if all_good {
+                                                    Some(keys_maybe)
                                                 } else {
-                                                    error!("found but accounts keys len {}", m.account_keys.len());
-                                                    error!("found but accounts_len {}", x.accounts.len());
                                                     None
                                                 }
-                                            });
+                                            } else {
+                                                None
+                                            }
+                                        });
                                         if accounts.is_none() {
-                                            error!("accounts_len {}",m.account_keys.len());
-                                            error!("accounts {:?}",m.account_keys);
                                             continue;
                                         }
                                         let accounts = accounts.unwrap();
@@ -385,15 +461,16 @@ pub async fn trade_chan(chan: Chan, mut rec:Receiver<InternalCommand>) {
                                         let sig = solana_sdk::signature::Signature::try_from(
                                             t.signature.as_slice(),
                                         )
-                                            .unwrap();
+                                        .unwrap();
                                         info!("sig {:?}", sig);
                                         let init_log = bincode::deserialize::<InitLog>(
                                             &BASE64_STANDARD.decode(log).unwrap(),
                                         )
-                                            .unwrap();
+                                        .unwrap();
                                         info!("init_log {:?}", init_log);
 
-                                        let mut trade = Trade::from_solana_account_grpc(accounts.as_slice());
+                                        let mut trade =
+                                            Trade::from_solana_account_grpc(accounts.as_slice());
                                         trade.root_kp = kp.to_bytes().to_vec();
                                         let trade_id = trade.id.clone();
                                         info!("trade:init {:?}", trade);
@@ -414,33 +491,42 @@ pub async fn trade_chan(chan: Chan, mut rec:Receiver<InternalCommand>) {
                                             price_tvl_builder.build(price_id, trade.id.clone());
                                         info!("price_tvl {price_tvl:?}");
                                         let price = price_tvl.price;
-                                        chan.bg.try_send(InternalCommand::InsertPrice(price_tvl)).unwrap();
-                                        let trade_req = trade.create_position(
-                                            price,
-                                            cfg,
-                                            true
-                                        );
-                                        let mut trade_res = send_tx(trade_req).await.unwrap();
-                                        let trade= trade_res.trade.clone();
-                                        let sig = trade_res.sig;
-                                        let signature = solana_sdk::signature::Signature::from_str(&sig.as_str())
+                                        chan.bg
+                                            .try_send(InternalCommand::InsertPrice(price_tvl))
                                             .unwrap();
+                                        let trade_req = trade.create_position(price, cfg, true);
+                                        let mut trade_res = send_tx(trade_req).await.unwrap();
+                                        let trade = trade_res.trade.clone();
+                                        let sig = trade_res.sig;
+                                        let signature = solana_sdk::signature::Signature::from_str(
+                                            &sig.as_str(),
+                                        )
+                                        .unwrap();
                                         info!("position accepted {:?}", sig);
                                         trade_res.trade.tx_in_id = Some(sig);
                                         trades.insert(trade_id, trade_res.trade.clone());
-                                        chan.bg.try_send(InternalCommand::InsertTrade(trade_res.trade)).unwrap();
+                                        chan.bg
+                                            .try_send(InternalCommand::InsertTrade(trade_res.trade))
+                                            .unwrap();
 
                                         let chan = chan.clone();
                                         tokio::spawn(async move {
                                             let rpc = solana_rpc_client();
                                             rpc.poll_for_signature(&signature).await.unwrap();
-                                            let res = rpc.get_signature_status(&signature).await.unwrap().unwrap();
+                                            let res = rpc
+                                                .get_signature_status(&signature)
+                                                .await
+                                                .unwrap()
+                                                .unwrap();
                                             if res.is_err() {
-                                                chan.trade.try_send(InternalCommand::StopWatchTrade(trade)).unwrap();
+                                                chan.trade
+                                                    .try_send(InternalCommand::StopWatchTrade(
+                                                        trade,
+                                                    ))
+                                                    .unwrap();
                                             }
-                                            info!("create open position result {:?}",res);
+                                            info!("create open position result {:?}", res);
                                         });
-
                                     }
                                 }
                             }
