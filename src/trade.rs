@@ -1,53 +1,25 @@
-use crate::cmd::InternalCommand;
-use crate::constant::{get_keypair, pg_conn, solana_rpc_client, BLOX_HEADER, PUMP_MIGRATION, RAYDIUM_V4_AUTHORITY, RAYDIUM_V4_PROGRAM, SOLANA_GRPC_URL, SOLANA_MINT_STR, SOLANA_RPC_URL};
+use crate::constant::{RAYDIUM_V4_AUTHORITY, RAYDIUM_V4_PROGRAM, SOLANA_MINT_STR};
 use crate::implement_diesel;
 use crate::position::PositionConfig;
-use crate::price::{Price, PriceBuilder};
-use anyhow::anyhow;
-use base64::prelude::BASE64_STANDARD;
-use base64::Engine;
 use chrono::{DateTime, Utc};
+use crate::util::diesel_export::*;
 use diesel::backend::Backend;
 use diesel::deserialize::FromSql;
-use diesel::dsl::count_star;
-use diesel::prelude::*;
 use diesel::serialize::{Output, ToSql};
 use diesel::sql_types::Integer;
 use diesel::{deserialize, serialize, AsChangeset, AsExpression, FromSqlRow, Identifiable, Insertable, Queryable, Selectable};
-use diesel_async::pooled_connection::deadpool::Object;
-use diesel_async::pooled_connection::AsyncDieselConnectionManager;
-use diesel_async::{AsyncConnection, AsyncPgConnection, RunQueryDsl};
-use futures::future::{select_all, SelectAll};
-use futures::{FutureExt, SinkExt, StreamExt};
-use jito_sdk_rust::JitoJsonRpcSDK;
-use log::{error, info, warn};
-use raydium_amm::instruction::swap_base_out;
-use raydium_amm::instruction::AmmInstruction::Initialize2;
-use raydium_amm::log::{decode_ray_log, InitLog, LogType, SwapBaseInLog, SwapBaseOutLog};
-use raydium_amm::math::SwapDirection;
+use log::{info};
 use raydium_amm::solana_program::native_token::{sol_to_lamports, LAMPORTS_PER_SOL};
-use reqwest::Client;
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::{Decimal, MathematicalOps};
 use rust_decimal_macros::dec;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
-use solana_client::nonblocking::rpc_client::RpcClient;
-use solana_client::rpc_config::{RpcSendTransactionConfig, RpcTransactionConfig};
-use solana_client::tpu_client::TpuClient;
-use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::compute_budget::ComputeBudgetInstruction;
 use solana_sdk::instruction::{AccountMeta, Instruction};
-use solana_sdk::message::VersionedMessage;
 use solana_sdk::pubkey::Pubkey;
-use solana_sdk::signature::{Keypair, Signature};
+use solana_sdk::signature::{Keypair};
 use solana_sdk::signer::Signer;
-use solana_sdk::transaction::Transaction;
-use solana_transaction_status::UiTransactionEncoding;
 use spl_associated_token_account_client::address::get_associated_token_address_with_program_id;
-use std::cmp::{max, min};
-use std::collections::{HashMap, HashSet};
-use std::pin::pin;
 use std::str::FromStr;
 
 #[derive(Queryable, Selectable, Insertable, AsChangeset, Identifiable)]
@@ -259,7 +231,9 @@ impl Trade {
 
             let sol_trn_normal = cfg.total_normal();
             let sol_trn_minus_fees_normal = cfg.total_minus_fees_normal();
-            let amount_normal = (cfg.min_sol / price) * dec!(10).powd(Decimal::from(decimals));
+            // let amount_normal = (cfg.min_sol / price) * dec!(10).powd(Decimal::from(decimals));
+            // let slippage_normal = (cfg.max_sol / price) * dec!(10).powd(Decimal::from(decimals));
+            let amount_normal = cfg.min_sol * Decimal::from(LAMPORTS_PER_SOL);
             let slippage_normal = (cfg.max_sol / price) * dec!(10).powd(Decimal::from(decimals));
             let ca = if token_program_id == spl_token::id() {
                 &mut create_token_accounts
@@ -299,7 +273,7 @@ impl Trade {
                         .unwrap(),
                 ),
                 spl_token::instruction::sync_native(&token_program_id, &wsol).unwrap(),
-                raydium_amm::instruction::swap_base_out(
+                raydium_amm::instruction::swap_base_in(
                     &RAYDIUM_V4_PROGRAM,
                     &amm,
                     &RAYDIUM_V4_AUTHORITY,
@@ -317,8 +291,8 @@ impl Trade {
                     &wsol,
                     &token,
                     &pubkey,
-                    slippage_normal.to_u64().unwrap(),
                     amount_normal.to_u64().unwrap(),
+                    slippage_normal.to_u64().unwrap(),
                 )
                     .unwrap(),
                 build_memo_instruction(),
@@ -332,7 +306,7 @@ impl Trade {
 
             TradeRequest {
                 trade: Trade {
-                    amount: amount_normal,
+                    amount: Default::default(),
                     entry_time: None,
                     entry_price: None,
                     exit_price: None,
@@ -388,14 +362,6 @@ impl Trade {
                 spl_token::instruction::close_account(
                     &token_program_id,
                     &token,
-                    &kp.pubkey(),
-                    &kp.pubkey(),
-                    &[&kp.pubkey()],
-                )
-                    .unwrap(),
-                spl_token::instruction::close_account(
-                    &token_program_id,
-                    &wsol,
                     &kp.pubkey(),
                     &kp.pubkey(),
                     &[&kp.pubkey()],

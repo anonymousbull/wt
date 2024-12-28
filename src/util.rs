@@ -1,15 +1,23 @@
-use crate::constant::PG_URL;
-use diesel_async::pooled_connection::deadpool::Pool;
-use diesel_async::pooled_connection::AsyncDieselConnectionManager;
-use diesel_async::AsyncPgConnection;
-use crate::cmd::InternalCommand;
 
 
+pub mod diesel_export {
+    pub use diesel_async::pooled_connection::deadpool::Pool;
+    pub use diesel_async::pooled_connection::AsyncDieselConnectionManager;
+    pub use diesel_async::pooled_connection::deadpool::Object;
+    pub use diesel_async::{AsyncConnection, AsyncPgConnection, RunQueryDsl};
+    pub use diesel::dsl::count_star;
+    pub use diesel::prelude::*;
+}
 
 #[macro_export]
 macro_rules! implement_diesel {
     ($struct_name:ident, $table_name:ident) => {
         impl $struct_name {
+            pub async fn delete_one(&self, mut c: &mut Object<AsyncPgConnection>) {
+                diesel::delete(
+                    crate::schema::$table_name::dsl::$table_name.filter(crate::schema::$table_name::dsl::id.eq(self.id.clone()))
+                ).execute(&mut c).await.unwrap();
+            }
             pub async fn id(mut c: &mut Object<AsyncPgConnection>) -> i64 {
                 crate::schema::$table_name::dsl::$table_name.select(
                     count_star()

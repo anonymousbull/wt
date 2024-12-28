@@ -1,5 +1,4 @@
 use crate::constant::{RAYDIUM_V4_PROGRAM, SOLANA_RPC_URL, SOLANA_WS_URL};
-use crate::util::Chan;
 use futures::StreamExt;
 use log::info;
 use solana_client::nonblocking::pubsub_client::PubsubClient;

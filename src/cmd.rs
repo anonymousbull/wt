@@ -7,6 +7,7 @@ pub enum InternalCommand {
     InsertTrade(Trade),
     UpdatePrice(Price),
     InsertPrice(Price),
+    StopWatchTrade(Trade),
     WatchPool(String),
     PriceTvl(Price),
     OnTrading,
