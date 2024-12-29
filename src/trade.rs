@@ -1,3 +1,4 @@
+use std::cmp::{max, min};
 use crate::constant::{RAYDIUM_V4_AUTHORITY, RAYDIUM_V4_PROGRAM, SOLANA_MINT_STR};
 use crate::implement_diesel;
 use crate::position::PositionConfig;
@@ -21,6 +22,7 @@ use solana_sdk::signature::{Keypair};
 use solana_sdk::signer::Signer;
 use spl_associated_token_account_client::address::get_associated_token_address_with_program_id;
 use std::str::FromStr;
+use crate::ray_log::{RayLog, RayLogInfo};
 
 #[derive(Queryable, Selectable, Insertable, AsChangeset, Identifiable)]
 #[diesel(table_name = crate::schema::trades)]
@@ -50,9 +52,24 @@ pub struct Trade {
     pub sol_after: Option<Decimal>,
 
     pub root_kp:Vec<u8>,
+    pub pool_id: String,
+    pub user_wallet: String,
+}
+
+#[derive(Queryable, Selectable, Insertable, AsChangeset, Identifiable)]
+#[diesel(table_name = crate::schema::trade_prices)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TradePrice {
+    pub id: i64,
+    pub trade_id: String,
+    pub price: Decimal,
+    pub tvl: Decimal,
 }
 
 implement_diesel!(Trade, trades);
+implement_diesel!(TradePrice, trade_prices);
+
 
 pub struct TradeRequest {
     pub trade: Trade,
@@ -114,10 +131,67 @@ where
 }
 
 
-
+struct PriceTvl {
+    tvl: Decimal,
+    price: Decimal,
+}
 
 
 impl Trade {
+    fn price_tvl(sol_amount: u64, token_amount: u64, token_decimals: u8) -> PriceTvl {
+        // 1000
+        let token_amount_normal =
+            Decimal::from(token_amount) / Decimal::from(10u64.pow(token_decimals as u32));
+        // 1
+        let sol_amount_normal = Decimal::from(sol_amount) / Decimal::from(LAMPORTS_PER_SOL);
+        // 1 MEMECOIN = 0.0001 SOL
+        let price = sol_amount_normal / token_amount_normal;
+        let tvl = (price * token_amount_normal) + sol_amount_normal;
+        PriceTvl { price, tvl  }
+    }
+    pub fn update_from_ray_log(&mut self, ray_log: &RayLog, price_id:i64, next:bool) -> TradePrice {
+        let (pc,coin) = match &ray_log.log {
+            RayLogInfo::InitLog(init) => {
+                self.decimals = if init.pc_decimals == 9 {
+                    init.coin_decimals
+                } else {
+                    init.pc_decimals
+                } as i16;
+                (init.pc_amount, init.coin_amount)
+            }
+            RayLogInfo::SwapBaseIn(swap) => {
+                if next {
+                    (ray_log.next_pc,ray_log.next_coin)
+                } else {
+                    (swap.pool_pc, swap.pool_coin)
+                }
+            }
+            RayLogInfo::SwapBaseOut(swap) => {
+                if next {
+                    (ray_log.next_pc,ray_log.next_coin)
+                } else {
+                    (swap.pool_pc, swap.pool_coin)
+                }
+            }
+            _ => unreachable!(),
+        };
+
+        let sol_amount = min(pc, coin);
+        let token_amount = max(pc, coin);
+
+        let price_tvl = Self::price_tvl(
+            sol_amount,
+            token_amount,
+            self.decimals as u8,
+        );
+
+        TradePrice{
+            id: price_id,
+            trade_id: self.id.clone(),
+            price: price_tvl.price,
+            tvl: price_tvl.tvl,
+        }
+    }
     pub async fn upsert_bulk(mut pg: &mut Object<AsyncPgConnection>, data: Vec<Self>) -> anyhow::Result<()> {
         let start_time = ::std::time::Instant::now();
         diesel::insert_into(crate::schema::trades::table)
@@ -132,6 +206,7 @@ impl Trade {
                 crate::schema::trades::state.eq(diesel::upsert::excluded(crate::schema::trades::state)),
                 crate::schema::trades::tx_in_id.eq(diesel::upsert::excluded(crate::schema::trades::tx_in_id)),
                 crate::schema::trades::tx_out_id.eq(diesel::upsert::excluded(crate::schema::trades::tx_out_id)),
+                crate::schema::trades::amount.eq(diesel::upsert::excluded(crate::schema::trades::amount)),
             ))
             .execute(&mut pg).await?;
         let elapsed_time = start_time.elapsed();
@@ -163,7 +238,7 @@ impl Trade {
         Pubkey::from_str(&self.token_program_id.as_str()).unwrap()
     }
     pub fn amm(&self)->Pubkey{
-        Pubkey::from_str(&self.id.as_str()).unwrap()
+        Pubkey::from_str(&self.pool_id.as_str()).unwrap()
     }
     pub fn coin_mint(&self)->Pubkey{
         Pubkey::from_str(&self.coin_mint.as_str()).unwrap()
@@ -181,6 +256,10 @@ impl Trade {
         self.pc_mint.as_str() == SOLANA_MINT_STR || self.coin_mint.as_str() == SOLANA_MINT_STR
     }
     pub fn create_position(self, price: Decimal, cfg: PositionConfig, open:bool) -> TradeRequest {
+
+        // let jito_acc = Pubkey::from_str_const("NextbLoCkVtMGcV47JzewQdvBpLqT9TxQFozQkN98pE");
+        // let jito_acc = Pubkey::from_str_const("HWEoBxYs7ssKuudEjzjmpfJVX7Dvi7wescFsVx2L5yoY");
+        let jito_acc = Pubkey::from_str_const(crate::constant::JITO_TIPS[fastrand::usize(..crate::constant::JITO_TIPS.len())]);
 
         let token_program_id = self.token_program();
         let kp = self.root_kp();
@@ -218,7 +297,6 @@ impl Trade {
             let mut create_token22_accounts = vec![];
             let mut rest_ix = vec![];
 
-            // let jito = Pubkey::from_str_const(JITO_TIPS[fastrand::usize(..JITO_TIPS.len())]);
             // let jito_tip_amount = sol_to_lamports(cfg.jito.to_f64().unwrap());
             let priority_fee_amount = cfg.priority_fee;
 
@@ -231,10 +309,10 @@ impl Trade {
 
             let sol_trn_normal = cfg.total_normal();
             let sol_trn_minus_fees_normal = cfg.total_minus_fees_normal();
-            // let amount_normal = (cfg.min_sol / price) * dec!(10).powd(Decimal::from(decimals));
-            // let slippage_normal = (cfg.max_sol / price) * dec!(10).powd(Decimal::from(decimals));
-            let amount_normal = cfg.min_sol * Decimal::from(LAMPORTS_PER_SOL);
+            let amount_normal = (cfg.min_sol / price) * dec!(10).powd(Decimal::from(decimals));
             let slippage_normal = (cfg.max_sol / price) * dec!(10).powd(Decimal::from(decimals));
+            // let amount_normal = cfg.min_sol * Decimal::from(LAMPORTS_PER_SOL);
+            // let slippage_normal = (cfg.max_sol / price) * dec!(10).powd(Decimal::from(decimals));
             let ca = if token_program_id == spl_token::id() {
                 &mut create_token_accounts
             } else {
@@ -273,7 +351,7 @@ impl Trade {
                         .unwrap(),
                 ),
                 spl_token::instruction::sync_native(&token_program_id, &wsol).unwrap(),
-                raydium_amm::instruction::swap_base_in(
+                raydium_amm::instruction::swap_base_out(
                     &RAYDIUM_V4_PROGRAM,
                     &amm,
                     &RAYDIUM_V4_AUTHORITY,
@@ -291,14 +369,14 @@ impl Trade {
                     &wsol,
                     &token,
                     &pubkey,
-                    amount_normal.to_u64().unwrap(),
                     slippage_normal.to_u64().unwrap(),
+                    amount_normal.to_u64().unwrap(),
                 )
                     .unwrap(),
-                build_memo_instruction(),
+                // build_memo_instruction(),
                 solana_sdk::system_instruction::transfer(
                     &kp.pubkey(),
-                    &Pubkey::from_str_const("HWEoBxYs7ssKuudEjzjmpfJVX7Dvi7wescFsVx2L5yoY"),
+                    &jito_acc,
                     sol_to_lamports(cfg.jito.to_f64().unwrap()),
                 ),
                 // solana_sdk::system_instruction::transfer(&ix_pubkey, &jito, jito_tip_amount),
@@ -367,10 +445,10 @@ impl Trade {
                     &[&kp.pubkey()],
                 )
                     .unwrap(),
-                build_memo_instruction(),
+                // build_memo_instruction(),
                 solana_sdk::system_instruction::transfer(
                     &kp.pubkey(),
-                    &Pubkey::from_str_const("HWEoBxYs7ssKuudEjzjmpfJVX7Dvi7wescFsVx2L5yoY"),
+                    &jito_acc,
                     sol_to_lamports(cfg.jito.to_f64().unwrap()),
                 ),
             ]);
@@ -382,55 +460,24 @@ impl Trade {
             }
         }
     }
-    // pub async fn try_fetch_pool(accounts: &[Pubkey]) -> Option<Self> {
-    //     let start_time = ::std::time::Instant::now();
-    //
-    //     let amm = accounts[2].to_string();
-    //     let coin_vault = accounts[5].to_string();
-    //     let pool_coin_vault = accounts[6].to_string();
-    //     let token_program = accounts.iter().find(|&x|{
-    //         &spl_token::id() == x || &spl_token_2022::id() == x
-    //     });
-    //
-    //     let rpc = solana_rpc_client();
-    //     let response = rpc.get_account(&Pubkey::from_str_const(amm.as_str()))
-    //         .await
-    //         .unwrap();
-    //     let pool = AmmInfo::load_from_bytes(response.data.as_slice()).unwrap();
-    //
-    //     let pool = Self {
-    //         id: amm,
-    //         pc_vault: pool.pc_vault.to_string(),
-    //         coin_vault: pool.coin_vault.to_string(),
-    //         coin_mint:pool.coin_vault_mint.to_string(),
-    //         // DANGEROUS
-    //         pc_mint: pool.pc_vault_mint.to_string(),
-    //         decimals: 6,
-    //         token_program_id: token_program.unwrap().to_string(),
-    //     };
-    //
-    //     if pool.is_sol_pool() {
-    //         Some(pool)
-    //     } else {
-    //         None
-    //     }
-    // }
 
-    pub fn from_solana_account_grpc(accounts: &[Pubkey]) -> Self {
+    pub fn from_solana_account_grpc(accounts: &[Pubkey],id:String) -> Self {
         let token_program_id = accounts[0].to_string();
         let amm = accounts[4].to_string();
         let coin_mint = accounts[8].to_string();
         let pc_mint = accounts[9].to_string();
         let coin_vault = accounts[10].to_string();
         let pc_vault = accounts[11].to_string();
+        let user_wallet = accounts[17].to_string();
         Self {
-            id: amm,
+            id,
+            pool_id: amm,
             coin_vault,
             pc_vault,
             coin_mint,
             pc_mint,
             // VERY RISKY
-            decimals: 6,
+            decimals: Default::default(),
             token_program_id,
 
             amount: Default::default(),
@@ -445,6 +492,7 @@ impl Trade {
             sol_before: Default::default(),
             sol_after: None,
             root_kp: vec![],
+            user_wallet,
         }
     }
 }

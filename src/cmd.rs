@@ -1,15 +1,15 @@
-use crate::price::Price;
-use crate::trade::Trade;
+use crate::trade::{Trade, TradePrice};
 
 #[derive(Debug)]
 pub enum InternalCommand {
+    RevertPendingTrade(Trade),
     UpdateTrade(Trade),
     InsertTrade(Trade),
-    UpdatePrice(Price),
-    InsertPrice(Price),
+    UpdatePrice(TradePrice),
+    InsertPrice(TradePrice),
     StopWatchTrade(Trade),
     WatchPool(String),
-    PriceTvl(Price),
+    PriceTvl(TradePrice),
     OnTrading,
     OffTrading,
     // UnconfirmedPosition {

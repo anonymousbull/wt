@@ -1,7 +1,7 @@
 // @generated automatically by Diesel CLI.
 
 diesel::table! {
-    prices (id) {
+    trade_prices (id) {
         id -> Int8,
         trade_id -> Text,
         price -> Numeric,
@@ -30,10 +30,12 @@ diesel::table! {
         sol_before -> Numeric,
         sol_after -> Nullable<Numeric>,
         root_kp -> Bytea,
+        pool_id -> Text,
+        user_wallet -> Text,
     }
 }
 
 diesel::allow_tables_to_appear_in_same_query!(
-    prices,
+    trade_prices,
     trades,
 );

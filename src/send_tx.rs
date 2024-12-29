@@ -1,16 +1,15 @@
+use crate::constant::{solana_rpc_client};
+use crate::trade::{TradeRequest, TradeResponse, TradeState};
 use base64::Engine;
 use log::info;
-use reqwest::Client;
-use serde_json::{json, Value};
+use serde_json::{json};
 use solana_sdk::signer::Signer;
 use solana_sdk::transaction::Transaction;
-use crate::constant::{solana_rpc_client, BLOX_HEADER};
-use crate::trade::{TradeRequest, TradeResponse, TradeState};
 
 pub async fn send_tx(mut req: TradeRequest) -> anyhow::Result<TradeResponse> {
     let rpc = solana_rpc_client();
     let start_time = ::std::time::Instant::now();
-    // let jito_sdk = jito_sdk_rust::JitoJsonRpcSDK::new("https://mainnet.block-engine.jito.wtf/api/v1", None);
+    let jito_sdk = jito_sdk_rust::JitoJsonRpcSDK::new("https://amsterdam.mainnet.block-engine.jito.wtf/api/v1", None);
 
     let tx = Transaction::new_signed_with_payer(
         &req.instructions,
@@ -18,44 +17,57 @@ pub async fn send_tx(mut req: TradeRequest) -> anyhow::Result<TradeResponse> {
         &[req.trade.root_kp()],
         rpc.get_latest_blockhash().await?,
     );
-    // let serialized_tx =
-    //     base64::engine::general_purpose::STANDARD.encode(bincode::serialize(&tx)?);
+    let serialized_tx =
+        base64::engine::general_purpose::STANDARD.encode(bincode::serialize(&tx)?);
 
     // info!("Sending transaction...");
 
-    // let params = json!({
-    //     "tx": serialized_tx,
-    //     "skipPreflight": true
-    // });
+    let params = json!({
+        "tx": serialized_tx,
+        "skipPreflight": true
+    });
 
-    // let response = jito_sdk.send_txn(Some(params), true).await.unwrap();
-    // let sig = response["result"]
-    //     .as_str()
-    //     .ok_or_else(|| anyhow!("Failed to get signature from response"))
-    //     .unwrap();
-
-    let serialized_tx =
-        base64::engine::general_purpose::STANDARD.encode(bincode::serialize(&tx).unwrap());
-    let client = Client::new();
-
-    let response = client
-        .post("https://ny.solana.dex.blxrbdn.com/api/v2/submit")
-        .header("Authorization", BLOX_HEADER)
-        .json(&json!({
-            "transaction": {"content": serialized_tx},
-            "frontRunningProtection": false,
-            "useStakedRPCs": true,
-        }))
-        .send()
-        .await
+    let response = jito_sdk.send_txn(Some(params), true).await.unwrap();
+    let sig = response["result"]
+        .as_str()
+        .ok_or_else(|| anyhow::format_err!("Failed to get signature from response"))
         .unwrap();
 
-    let text = response.text().await.unwrap();
-    let v = serde_json::from_str::<Value>(&text).unwrap();
-    // println!("Status: {}", response.status());
-    info!("Body: {}", text);
+    // let serialized_tx =
+    //     base64::engine::general_purpose::STANDARD.encode(bincode::serialize(&tx).unwrap());
+    // let client = Client::new();
+    //
+    // let response = client
+    //     .post("https://uk.solana.dex.blxrbdn.com/api/v2/submit")
+    //     .header("Authorization", BLOX_HEADER)
+    //     .json(&json!({
+    //         "transaction": {"content": serialized_tx},
+    //         "frontRunningProtection": false,
+    //         "useStakedRPCs": true,
+    //     }))
+    //     .send()
+    //     .await
+    //     .unwrap();
 
-    let sig = v["signature"].as_str().unwrap();
+    // let response = client
+    //     .post("https://fra.nextblock.io/api/v2/submit")
+    //     .header("Authorization", NEXT_BLOCK)
+    //     .json(&json!({
+    //       "transaction": {
+    //         "content": serialized_tx
+    //       },
+    //       "frontRunningProtection": false // protects a transaction from MEV
+    //     })) // Automatically sets Content-Type to application/json
+    //     .send()
+    //     .await
+    //     .unwrap();
+
+    // let text = response.text().await.unwrap();
+    // let v = serde_json::from_str::<Value>(&text).unwrap();
+    // println!("Status: {}", response.status());
+    // info!("Body: {}", text);
+
+    // let sig = v["signature"].as_str().unwrap();
 
     req.trade.state = TradeState::PositionPendingFill;
     // info!("Transaction sent with signature: {}", sig);

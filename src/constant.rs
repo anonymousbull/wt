@@ -21,6 +21,7 @@ pub const JITO_TIPS:[&str;8] = [
 pub static KEYPAIR: OnceLock<Keypair> = OnceLock::new();
 pub const SOLANA_WS_URL: &str = env!("SOLANA_WSS_URL");
 pub const BLOX_HEADER: &str = env!("BLOX_HEADER");
+pub const NEXT_BLOCK: &str = env!("NEXT_BLOCK");
 pub const SOLANA_MINT_STR: &str = "So11111111111111111111111111111111111111112";
 pub const SOLANA_MINT: Pubkey = Pubkey::from_str_const("So11111111111111111111111111111111111111112");
 pub const PUMP_MIGRATION:Pubkey = Pubkey::from_str_const("39azUYFWPz3VHgKCf3VChUwbpURdCHRxjWVowf5jUJjg");
