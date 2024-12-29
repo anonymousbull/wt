@@ -66,6 +66,42 @@ pub async fn bg_chan(mut rec: Receiver<InternalCommand>) {
     }
 }
 
+fn poll_trade_and_cmd(
+    signature: Signature,
+    chan: Chan,
+    status: InternalCommand,
+    log_action: String
+){
+    tokio::spawn(async move {
+        info!("starting poll");
+        let mut err = false;
+        let mut err_msg = None;
+        let rpc = solana_rpc_client();
+        let res = rpc.poll_for_signature(&signature).await;
+        if res.is_err() {
+            err = true;
+            err_msg = Some(format!("{:?}",res));
+        } else {
+            info!("polled");
+            let res = rpc
+                .get_signature_status(&signature)
+                .await;
+            if let Ok(Some(Ok(_))) = res {
+                info!("{log_action} poll success");
+            } else {
+                err = true;
+                err_msg = Some(format!("{:?}",res));
+            }
+        }
+        if err {
+            error!("could not {log_action} {:?}",err_msg);
+            chan.trade
+                .try_send(status)
+                .unwrap();
+        }
+    });
+}
+
 /// example of swap_base_in log
 /// https://solscan.io/token/4xDVi6XiDU6rAdvm4VjAdMoaXACXVjBuzLS74Cw1uvA3?activity_type=ACTIVITY_SPL_INIT_MINT&activity_type=ACTIVITY_TOKEN_ADD_LIQ&activity_type=ACTIVITY_TOKEN_REMOVE_LIQ&activity_type=ACTIVITY_TOKEN_SWAP&time=1735257600000&time=1735321439000&page=6#defiactivities
 /// SwapBaseInLog { log_type: 3, amount_in: 670000000000, minimum_out: 1, direction: 1, user_source: 670000000000, pool_coin: 9000000000000000000, pool_pc: 150000000, out_amount: 8997980477953550992 }
@@ -269,30 +305,14 @@ pub async fn trade_chan(chan: Chan, mut rec: Receiver<InternalCommand>) {
                                                         trade.tx_out_id = Some(trade_res.sig);
                                                         trades.insert(trade.pool_id.clone(), trade.clone());
                                                         let chan = chan.clone();
-                                                        tokio::spawn(async move {
-                                                            let rpc = solana_rpc_client();
-                                                            rpc.poll_for_signature(&sig)
-                                                                .await
-                                                                .unwrap();
-                                                            let res = rpc
-                                                                .get_signature_status(&sig)
-                                                                .await
-                                                                .unwrap()
-                                                                .unwrap();
-                                                            if res.is_err() {
-                                                                chan.trade
-                                                                    .try_send(InternalCommand::RevertPendingTrade(
-                                                                        trade,
-                                                                    ))
-                                                                    .unwrap();
-                                                                error!(
-                                                                    "create close position result {:?}",
-                                                                    res
-                                                                );
-                                                            } else {
-                                                                info!("closed trade polled successfully");
-                                                            }
-                                                        });
+                                                        poll_trade_and_cmd(
+                                                            sig,
+                                                            chan.clone(),
+                                                            InternalCommand::RevertPendingTrade(
+                                                                trade,
+                                                            ),
+                                                            "close position".to_string()
+                                                        );
                                                     }
                                                     Err(e) => {
                                                         error!("could not close trade {e}");
@@ -307,7 +327,6 @@ pub async fn trade_chan(chan: Chan, mut rec: Receiver<InternalCommand>) {
                                                 trades.insert(trade.pool_id.clone(), trade.clone());
                                                 info!("closed {trade:?}");
                                             }
-
                                         }
 
                                         trades.clone().iter().for_each(|(id, trade)| {
@@ -409,14 +428,6 @@ pub async fn trade_chan(chan: Chan, mut rec: Receiver<InternalCommand>) {
                                         }
                                         let accounts = accounts.unwrap();
 
-                                        // .and_then(|x|{
-                                        //     if x.contains(&PUMP_MIGRATION) {
-                                        //         Some(x)
-                                        //     } else {
-                                        //         None
-                                        //     }
-                                        // });
-
                                         let log = meta
                                             .log_messages
                                             .iter()
@@ -465,26 +476,14 @@ pub async fn trade_chan(chan: Chan, mut rec: Receiver<InternalCommand>) {
                                             .unwrap();
 
                                         let chan = chan.clone();
-                                        tokio::spawn(async move {
-                                            info!("starting poll");
-                                            let rpc = solana_rpc_client();
-                                            rpc.poll_for_signature(&signature).await.unwrap();
-                                            info!("polled");
-                                            let res = rpc
-                                                .get_signature_status(&signature)
-                                                .await
-                                                .unwrap()
-                                                .unwrap();
-                                            info!("poll result below");
-                                            if res.is_err() {
-                                                chan.trade
-                                                    .try_send(InternalCommand::StopWatchTrade(
-                                                        trade,
-                                                    ))
-                                                    .unwrap();
-                                            }
-                                            info!("create open position result {:?}", res);
-                                        });
+                                        poll_trade_and_cmd(
+                                            signature,
+                                            chan.clone(),
+                                            InternalCommand::StopWatchTrade(
+                                                trade,
+                                            ),
+                                            "open position".to_string()
+                                        );
                                     }
                                 }
                             }
