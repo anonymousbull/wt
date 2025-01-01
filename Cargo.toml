@@ -3,16 +3,16 @@ resolver = "2"
 members = ["raydium/*"]
 
 [workspace.dependencies]
-solana-client = {version =  "2.1.0" }
-solana-program = {version =  "2.1.0" }
-solana-sdk = {version =  "2.1.0" }
-solana-transaction-status = {version =  "2.1.0" }
+solana-client = {version =  "2.1.7" }
+solana-program = {version =  "2.1.7" }
+solana-sdk = {version =  "2.1.7" }
+solana-transaction-status = {version =  "2.1.7" }
 spl-token = { version = "7.0.0" }
 spl-associated-token-account = {version = "6.0.0" }
 spl-associated-token-account-client = {version = "2.0.0"}
 spl-token-2022 = { version = "6.0.0" }
 mpl-token-metadata = { version = "5.1.0" }
-solana-account-decoder = {version = "2.1.0"}
+solana-account-decoder = {version = "2.1.7"}
 anchor-client = { git = "https://github.com/coral-xyz/anchor", rev = "955e7eaf61313bb514021dc073092256cb896bfc" }
 anchor-lang = { git = "https://github.com/coral-xyz/anchor", rev = "955e7eaf61313bb514021dc073092256cb896bfc" }
 anchor-spl = { git = "https://github.com/coral-xyz/anchor", rev = "955e7eaf61313bb514021dc073092256cb896bfc", features = ["memo", "metadata"] }
@@ -76,3 +76,8 @@ console-subscriber = {version = "0.4.1" , optional = true}
 yellowstone-grpc-client = {version = "4.1.0"}
 yellowstone-grpc-proto = {version = "4.1.0"}
 fastrand = {version = "2.3.0"}
+fastwebsockets = { version = "0.8.0", features = ["upgrade", "unstable-split"] }
+hyper-util = {version = "0.1.10"}
+hyper = {version = "1.5.2"}
+http-body-util = {version = "0.1.2"}
+surrealdb = {version = "2.1.4"}

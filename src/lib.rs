@@ -7,3 +7,4 @@ pub mod schema;
 pub mod send_tx;
 pub mod chan;
 pub mod ray_log;
+pub mod websocket_server;

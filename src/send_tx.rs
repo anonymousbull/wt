@@ -1,106 +1,120 @@
-use crate::constant::{solana_rpc_client};
+use anyhow::anyhow;
+use crate::constant::{solana_rpc_client, rpcs, rpc1, rpc2, rpc3, jito1, jito2};
 use crate::trade::{TradeRequest, TradeResponse, TradeState};
 use base64::Engine;
+use futures::future::join_all;
+use futures::stream::FuturesUnordered;
 use log::info;
-use serde_json::{json};
+use rust_decimal::Decimal;
+use rust_decimal::prelude::ToPrimitive;
+use serde_json::json;
+use solana_client::nonblocking::rpc_client::RpcClient;
+use solana_sdk::commitment_config::CommitmentConfig;
+use solana_sdk::hash::Hash;
+use solana_sdk::native_token::sol_to_lamports;
+use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signer::Signer;
 use solana_sdk::transaction::Transaction;
+use tokio::task::JoinHandle;
 
-pub async fn send_tx(mut req: TradeRequest) -> anyhow::Result<TradeResponse> {
-    let rpc = solana_rpc_client();
-    let start_time = ::std::time::Instant::now();
-    let jito_sdk = jito_sdk_rust::JitoJsonRpcSDK::new("https://amsterdam.mainnet.block-engine.jito.wtf/api/v1", None);
+#[derive(Clone,Copy)]
+pub struct SendTxConfig {
+    pub jito_tip:Decimal,
+}
 
-    let tx = Transaction::new_signed_with_payer(
-        &req.instructions,
-        Some(&req.trade.root_kp().pubkey()),
-        &[req.trade.root_kp()],
-        rpc.get_latest_blockhash().await?,
-    );
-    let serialized_tx =
-        base64::engine::general_purpose::STANDARD.encode(bincode::serialize(&tx)?);
+pub trait SendTx {
+    async fn send_tx(&self,tx:Transaction,cfg:Option<SendTxConfig>)->anyhow::Result<String>;
+    async fn get_latest_blockhash() -> anyhow::Result<Hash> {
+        rpc1().get_latest_blockhash().await.map_err(|err| anyhow::Error::msg(err.to_string()))
+    }}
 
-    // info!("Sending transaction...");
+impl SendTx for RpcClient {
+    async fn send_tx(&self, tx: Transaction, cfg: Option<SendTxConfig>) -> anyhow::Result<String> {
+        let start_time = ::std::time::Instant::now();
 
-    let params = json!({
+        let resp = self
+            .send_transaction_with_config(
+                &tx,
+                solana_client::rpc_config::RpcSendTransactionConfig {
+                    skip_preflight: true,
+                    preflight_commitment: Some(solana_sdk::commitment_config::CommitmentLevel::Processed),
+                    encoding: None,
+                    max_retries: None,
+                    min_context_slot: None,
+                }
+                // &rpc_client.get_latest_blockhash().await.unwrap(),
+            )
+            .await.map(|x|x.to_string())
+            .map_err(|err| anyhow::Error::msg(err.to_string()));
+        info!("{} Trade sent tx: {:?}",self.url(), start_time.elapsed());
+        resp
+    }
+
+
+}
+
+impl SendTx for jito_sdk_rust::JitoJsonRpcSDK {
+    async fn send_tx(&self,tx:Transaction,cfg:Option<SendTxConfig>) -> anyhow::Result<String> {
+        let start_time = ::std::time::Instant::now();
+        let serialized_tx =
+            base64::engine::general_purpose::STANDARD.encode(bincode::serialize(&tx).unwrap());
+        let params = json!({
         "tx": serialized_tx,
-        "skipPreflight": true
+        "skipPreflight": false
     });
+        let response = self.send_txn(Some(params), true).await.unwrap();
+        let sig = response["result"]
+            .as_str()
+            .ok_or_else(|| anyhow::format_err!("Failed to get signature from response"))
+            .unwrap();
+        info!("jito Trade sent tx: {:?}", start_time.elapsed());
+        Ok(sig.to_string())
+    }
 
-    let response = jito_sdk.send_txn(Some(params), true).await.unwrap();
-    let sig = response["result"]
-        .as_str()
-        .ok_or_else(|| anyhow::format_err!("Failed to get signature from response"))
-        .unwrap();
 
-    // let serialized_tx =
-    //     base64::engine::general_purpose::STANDARD.encode(bincode::serialize(&tx).unwrap());
-    // let client = Client::new();
-    //
-    // let response = client
-    //     .post("https://uk.solana.dex.blxrbdn.com/api/v2/submit")
-    //     .header("Authorization", BLOX_HEADER)
-    //     .json(&json!({
-    //         "transaction": {"content": serialized_tx},
-    //         "frontRunningProtection": false,
-    //         "useStakedRPCs": true,
-    //     }))
-    //     .send()
-    //     .await
-    //     .unwrap();
+}
 
-    // let response = client
-    //     .post("https://fra.nextblock.io/api/v2/submit")
-    //     .header("Authorization", NEXT_BLOCK)
-    //     .json(&json!({
-    //       "transaction": {
-    //         "content": serialized_tx
-    //       },
-    //       "frontRunningProtection": false // protects a transaction from MEV
-    //     })) // Automatically sets Content-Type to application/json
-    //     .send()
-    //     .await
-    //     .unwrap();
-
-    // let text = response.text().await.unwrap();
-    // let v = serde_json::from_str::<Value>(&text).unwrap();
-    // println!("Status: {}", response.status());
-    // info!("Body: {}", text);
-
-    // let sig = v["signature"].as_str().unwrap();
-
-    req.trade.state = TradeState::PositionPendingFill;
-    // info!("Transaction sent with signature: {}", sig);
-    // info!("Built trade tx: {:?}", start_time.elapsed());
-    //
-    // // let start_time = ::std::time::Instant::now();
-    // let sig = rpc
-    //     .send_transaction_with_config(
-    //         &tx,
-    //         RpcSendTransactionConfig{
-    //             skip_preflight: true,
-    //             preflight_commitment: None,
-    //             encoding: None,
-    //             max_retries: None,
-    //             min_context_slot: None,
-    //         }
-    //         // &rpc_client.get_latest_blockhash().await.unwrap(),
-    //     )
-    //     .await?;
-    // info!("signature {siga} {:?}", start_time.elapsed());
-
-    info!("Confirmed trade sent tx: {:?}", start_time.elapsed());
-    //
-
-    // let sig = rpc
-    //     .send_and_confirm_transaction(&tx)
-    //     .await
-    //     .unwrap();
-    info!("this tx is confirmed v2 {:?}", sig);
-
-    Ok(TradeResponse {
-        trade: req.trade,
-        instructions: req.instructions,
-        sig: sig.to_string(),
-    })
+pub async fn send_tx(mut req: TradeRequest, cfg:Option<SendTxConfig>) -> FuturesUnordered<JoinHandle<anyhow::Result<TradeResponse>>> {
+    let mut futs = FuturesUnordered::new();
+    futs.push(
+        tokio::spawn({
+            let req= req.clone();
+            async move {
+                req.send_tx(rpc1(),cfg).await
+            }
+        })
+    );
+    futs.push(
+        tokio::spawn({
+            let req= req.clone();
+            async move {
+                req.send_tx(rpc2(),cfg).await
+            }
+        })
+    );
+    futs.push(
+        tokio::spawn({
+            let req= req.clone();
+            async move {
+                req.send_tx(rpc3(),cfg).await
+            }
+        })
+    );
+    futs.push(
+        tokio::spawn({
+            let req= req.clone();
+            async move {
+                req.send_tx(jito1(),cfg).await
+            }
+        })
+    );
+    futs.push(
+        tokio::spawn({
+            let req= req.clone();
+            async move {
+                req.send_tx(jito2(),cfg).await
+            }
+        })
+    );
+    futs
 }

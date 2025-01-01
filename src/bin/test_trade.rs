@@ -11,14 +11,14 @@ use solana_sdk::signer::Signer;
 use solana_sdk::transaction::Transaction;
 use raydium_amm::instruction::swap_base_in;
 use raydium_amm::solana_program::pubkey::Pubkey;
-use wolf_trader::constant::{get_keypair, BLOX_HEADER, RAYDIUM_V4_PROGRAM, SOLANA_MINT_STR, SOLANA_RPC_URL};
+use wolf_trader::constant::{get_keypair, BLOX_HEADER, RAYDIUM_V4_PROGRAM, SOLANA_MINT_STR, SOLANA_RPC_URL1};
 
 #[tokio::main]
 async fn main() {
     env_logger::Builder::from_env(env_logger::Env::new().default_filter_or("info"))
         .format_timestamp_millis()
         .init();
-    let rpc = RpcClient::new(SOLANA_RPC_URL.to_string());
+    let rpc = RpcClient::new(SOLANA_RPC_URL1.to_string());
 
     // PoolIx{
     //     token_program: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA".to_string(),

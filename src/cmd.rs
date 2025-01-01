@@ -1,7 +1,21 @@
+use crate::chan::InterestedTx;
 use crate::trade::{Trade, TradePrice};
+
 
 #[derive(Debug)]
 pub enum InternalCommand {
+    AddTxOpen(Trade),
+    AddTxClose(Trade),
+    TradeState {
+        trade: Trade,
+        interested_tx: InterestedTx
+    },
+    PumpMigration(InterestedTx),
+    IsPumpTrade,
+    DoNothing,
+    PumpPrice,
+    ExternalTrade(Trade),
+    Log(String),
     RevertPendingTrade(Trade),
     UpdateTrade(Trade),
     InsertTrade(Trade),

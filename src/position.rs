@@ -7,15 +7,16 @@ use serde::{Deserialize, Serialize};
 pub struct PositionConfig {
     pub min_sol:Decimal,
     pub max_sol:Decimal,
-    pub fee:Decimal,
+    pub ata_fee:Decimal,
     pub jito:Decimal,
     pub close_trade_fee: Decimal,
     pub priority_fee: Decimal,
+    pub base_fee: Decimal,
 }
 
 impl PositionConfig {
     pub fn total_normal(&self) ->Decimal {
-        self.max_sol + (self.fee * dec!(2)) + self.jito + self.close_trade_fee
+        self.max_sol + (self.ata_fee * dec!(2)) + self.jito + self.close_trade_fee
     }
     pub fn total_minus_fees_normal(&self) ->Decimal {
         self.max_sol

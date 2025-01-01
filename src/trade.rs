@@ -22,12 +22,15 @@ use solana_sdk::signature::{Keypair};
 use solana_sdk::signer::Signer;
 use spl_associated_token_account_client::address::get_associated_token_address_with_program_id;
 use std::str::FromStr;
+use jito_sdk_rust::JitoJsonRpcSDK;
+use solana_sdk::transaction::Transaction;
 use crate::ray_log::{RayLog, RayLogInfo};
+use crate::send_tx::{SendTx, SendTxConfig};
 
 #[derive(Queryable, Selectable, Insertable, AsChangeset, Identifiable)]
 #[diesel(table_name = crate::schema::trades)]
 #[diesel(check_for_backend(diesel::pg::Pg))]
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash,Serialize,Deserialize)]
 pub struct Trade {
     pub id: String,
     pub coin_vault: String,
@@ -53,7 +56,9 @@ pub struct Trade {
 
     pub root_kp:Vec<u8>,
     pub pool_id: String,
+    // pub pump_curve_id: String,
     pub user_wallet: String,
+
 }
 
 #[derive(Queryable, Selectable, Insertable, AsChangeset, Identifiable)]
@@ -71,11 +76,14 @@ implement_diesel!(Trade, trades);
 implement_diesel!(TradePrice, trade_prices);
 
 
+#[derive(Clone)]
 pub struct TradeRequest {
     pub trade: Trade,
-    pub instructions: Vec<Instruction>
+    pub instructions: Vec<Instruction>,
+
 }
 
+#[derive(Debug)]
 pub struct TradeResponse {
     pub instructions: Vec<Instruction>,
     pub trade: Trade,
@@ -137,7 +145,47 @@ struct PriceTvl {
 }
 
 
+impl TradeRequest {
+    pub async fn send_tx<T:SendTx>(mut self,rpc:T, send_tx_cfg:Option<SendTxConfig>)->anyhow::Result<TradeResponse>{
+        let tx = if let Some(send_tx_cfg) = &send_tx_cfg {
+            let jito_instructions = vec![
+                &self.instructions[..],
+                &vec![
+                    solana_sdk::system_instruction::transfer(
+                        &self.trade.root_kp().pubkey(),
+                        &solana_sdk::pubkey::Pubkey::from_str_const(crate::constant::JITO_TIPS[fastrand::usize(..crate::constant::JITO_TIPS.len())]),
+                        sol_to_lamports(send_tx_cfg.jito_tip.to_f64().unwrap()),
+                    ),
+                ][..]
+            ].concat();
+            Transaction::new_signed_with_payer(
+                &jito_instructions,
+                Some(&self.trade.root_kp().pubkey()),
+                &[self.trade.root_kp()],
+                T::get_latest_blockhash().await.expect("yoo"),
+            )
+        } else {
+            Transaction::new_signed_with_payer(
+                &self.instructions,
+                Some(&self.trade.root_kp().pubkey()),
+                &[self.trade.root_kp()],
+                T::get_latest_blockhash().await.expect("yoo"),
+            )
+        };
+
+        // self.trade.state = TradeState::PositionPendingFill;
+
+        rpc.send_tx(tx,send_tx_cfg).await
+            .map(|sig|TradeResponse {
+                trade: self.trade,
+                instructions: self.instructions,
+                sig,
+            })
+    }
+}
+
 impl Trade {
+
     fn price_tvl(sol_amount: u64, token_amount: u64, token_decimals: u8) -> PriceTvl {
         // 1000
         let token_amount_normal =
@@ -192,8 +240,17 @@ impl Trade {
             tvl: price_tvl.tvl,
         }
     }
-    pub async fn upsert_bulk(mut pg: &mut Object<AsyncPgConnection>, data: Vec<Self>) -> anyhow::Result<()> {
+    pub async fn get_by_pool(mut pg: &mut Object<AsyncPgConnection>, data: String) -> Self {
         let start_time = ::std::time::Instant::now();
+        let a = crate::schema::trades::dsl::trades.filter(
+            crate::schema::trades::pool_id.eq(data)
+        ).first(&mut pg).await.unwrap();
+        let elapsed_time = start_time.elapsed();
+        info!("Time taken for get: {:?}",elapsed_time);
+        a
+    }
+    pub async fn upsert_bulk(mut pg: &mut Object<AsyncPgConnection>, data: Vec<Self>) -> anyhow::Result<()> {
+        // let start_time = ::std::time::Instant::now();
         diesel::insert_into(crate::schema::trades::table)
             .values(&data)
             .on_conflict(crate::schema::trades::id)
@@ -209,8 +266,8 @@ impl Trade {
                 crate::schema::trades::amount.eq(diesel::upsert::excluded(crate::schema::trades::amount)),
             ))
             .execute(&mut pg).await?;
-        let elapsed_time = start_time.elapsed();
-        info!("Time taken for bulk upsert: {} {} {:?}",data.len(), "trades", elapsed_time);
+        // let elapsed_time = start_time.elapsed();
+        // info!("Time taken for bulk upsert: {} {} {:?}",data.len(), "trades", elapsed_time);
         Ok(())
     }
     pub fn sol_mint(&self) -> Pubkey {
@@ -289,10 +346,11 @@ impl Trade {
         );
 
         let mut parent_root_ix = vec![
-            ComputeBudgetInstruction::set_compute_unit_limit(100_000),
+
         ];
 
         if open {
+            parent_root_ix.push(ComputeBudgetInstruction::set_compute_unit_limit(90_000));
             let mut create_token_accounts = vec![];
             let mut create_token22_accounts = vec![];
             let mut rest_ix = vec![];
@@ -405,6 +463,7 @@ impl Trade {
                     .concat(),
             }
         } else {
+            parent_root_ix.push(ComputeBudgetInstruction::set_compute_unit_limit(60_000));
 
             parent_root_ix.extend_from_slice(&vec![
                 raydium_amm::instruction::swap_base_in(

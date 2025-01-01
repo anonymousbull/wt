@@ -24,21 +24,21 @@ macro_rules! implement_diesel {
                 ).first(&mut c).await.unwrap()
             }
             pub async fn insert_bulk(mut pg: &mut diesel_async::pooled_connection::deadpool::Object<diesel_async::AsyncPgConnection>, data: Vec<Self>) -> anyhow::Result<()> {
-                let start_time = ::std::time::Instant::now();
+                // let start_time = ::std::time::Instant::now();
                 diesel::insert_into(crate::schema::$table_name::table)
                     .values(&data)
                     .execute(&mut pg).await?;
-                let elapsed_time = start_time.elapsed();
-                log::info!("Time taken for bulk insert: {} {} {:?}",data.len(), stringify!($table_name), elapsed_time);
+                // let elapsed_time = start_time.elapsed();
+                // log::info!("Time taken for bulk insert: {} {} {:?}",data.len(), stringify!($table_name), elapsed_time);
                 Ok(())
             }
             pub async fn insert(&self,mut pg: &mut diesel_async::pooled_connection::deadpool::Object<diesel_async::AsyncPgConnection>) -> anyhow::Result<()> {
-                let start_time = ::std::time::Instant::now();
+                // let start_time = ::std::time::Instant::now();
                 diesel::insert_into(crate::schema::$table_name::table)
                     .values(self)
                     .execute(&mut pg).await?;
-                let elapsed_time = start_time.elapsed();
-                log::info!("Time taken for bulk insert: {} {:?}", stringify!($table_name), elapsed_time);
+                // let elapsed_time = start_time.elapsed();
+                // log::info!("Time taken for bulk insert: {} {:?}", stringify!($table_name), elapsed_time);
                 Ok(())
             }
 

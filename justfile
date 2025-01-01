@@ -1,6 +1,7 @@
 set dotenv-required
 set dotenv-load := true
-
+pump:
+    cd pump && bun start
 diesel:
     diesel setup
 dmg name:
@@ -26,9 +27,13 @@ stop name:
 restart name:
     pm2 restart {{name}}
 serve env:
-    DATABASE_URL=$PG_URL_{{env}} ENV={{env}} RUST_BACKTRACE=1 pm2 start --name rust -x "cargo" --interpreter none -- r -r --bin femimarket
+    DATABASE_UsRL=$PG_URL_{{env}} ENV={{env}} RUST_BACKTRACE=1 pm2 start --name rust -x "cargo" --interpreter none -- r -r --bin femimarket
 rust:
-    RUSTFLAGS="--cfg tokio_unstable" RUST_BACKTRACE=1 cargo r -r --bin wolf_trader
+    ENABLE_WEBSOCKET=n RUSTFLAGS="--cfg tokio_unstable" RUST_BACKTRACE=1 cargo r -r --bin wolf_trader
+rust-ws:
+    ENABLE_WEBSOCKET=y RUSTFLAGS="--cfg tokio_unstable" RUST_BACKTRACE=1 cargo r -r --bin wolf_trader
+trade action coin:
+    ENABLE_WEBSOCKET=n RUSTFLAGS="--cfg tokio_unstable" RUST_BACKTRACE=1 cargo r -r --bin trade {{action}} {{coin}}
 fix:
     RUSTFLAGS="--cfg tokio_unstable" RUST_BACKTRACE=1 cargo fix
 flame env:
