@@ -1,13 +1,15 @@
-use std::sync::{Arc};
+use std::sync::Arc;
 use base64::Engine;
 use env_logger::Builder;
 use env_logger::fmt::style;
 use log::{Level, LevelFilter, Metadata, Record};
+use surrealdb::engine::remote::ws::Ws;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::Mutex;
-use wolf_trader::chan::{bg_chan, trade_chan, Chan};
+use wolf_trader::bg_chan::bg_chan;
+use wolf_trader::chan::{trade_chan, Chan};
 use wolf_trader::cmd::InternalCommand;
-use wolf_trader::constant::ENABLE_WEBSOCKET;
+use wolf_trader::constant::{DB, ENABLE_WEBSOCKET, SURREAL_DB_URL};
 use wolf_trader::websocket_server::{start_websocket_server, WebsocketState};
 
 struct SimpleLogger {
@@ -71,6 +73,10 @@ async fn main() {
             .map(|()| log::set_max_level(LevelFilter::Info))
             .unwrap();
     }
+
+    DB.connect::<Ws>(SURREAL_DB_URL).await.unwrap();
+    DB.use_ns("wt").use_db("wt").await.unwrap();
+
 
     let chan = Chan{
         bg: bg_send,

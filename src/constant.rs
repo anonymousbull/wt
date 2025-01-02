@@ -1,14 +1,11 @@
-use std::sync::OnceLock;
-use diesel_async::AsyncPgConnection;
-use diesel_async::pooled_connection::AsyncDieselConnectionManager;
 use diesel_async::pooled_connection::deadpool::Pool;
-use futures::stream::FuturesUnordered;
+use diesel_async::pooled_connection::AsyncDieselConnectionManager;
+use diesel_async::AsyncPgConnection;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Keypair;
-use crate::send_tx::{SendTx, SendTxConfig};
-use crate::trade::TradeRequest;
+use std::sync::OnceLock;
 
 pub const JITO_TIPS:[&str;8] = [
     "96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5",
@@ -21,9 +18,10 @@ pub const JITO_TIPS:[&str;8] = [
     "3AVi9Tg9Uo68tJfuvoKvqKNWKkC5wPdSSdeBnizKZ6jT",
 ];
 
-static DB: std::sync::LazyLock<surrealdb::Surreal<surrealdb::engine::remote::ws::Client>> =
+pub static DB: std::sync::LazyLock<surrealdb::Surreal<surrealdb::engine::remote::ws::Client>> =
     std::sync::LazyLock::new(surrealdb::Surreal::init);
 
+pub type Sdb = surrealdb::Surreal<surrealdb::engine::remote::ws::Client>;
 
 pub static KEYPAIR: OnceLock<Keypair> = OnceLock::new();
 pub const SOLANA_WS_URL: &str = env!("SOLANA_WSS_URL");
@@ -76,6 +74,9 @@ pub fn get_keypair() -> Keypair {
 
 pub fn solana_rpc_client() -> RpcClient {
     RpcClient::new_with_commitment(SOLANA_RPC_URL1.to_string(), CommitmentConfig::processed())
+}
+pub fn geyser() -> yellowstone_grpc_client::GeyserGrpcBuilder {
+    yellowstone_grpc_client::GeyserGrpcClient::build_from_static(SOLANA_GRPC_URL)
 }
 
 pub fn rpc1() -> RpcClient {

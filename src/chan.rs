@@ -1,21 +1,24 @@
 use crate::cmd::InternalCommand;
-use crate::constant::{get_keypair, pg_conn, rpcs, solana_rpc_client, PUMP_MIGRATION, PUMP_PROGRAM, RAYDIUM_V4_AUTHORITY, RAYDIUM_V4_PROGRAM, SOLANA_ATA_PROGRAM, SOLANA_GRPC_URL, SOLANA_MINT, SOLANA_RENT_PROGRAM, SOLANA_SERUM_PROGRAM, SOLANA_SYSTEM_PROGRAM, SURREAL_DB_URL};
+use crate::constant::{get_keypair, geyser, solana_rpc_client, PUMP_MIGRATION, PUMP_PROGRAM, RAYDIUM_V4_AUTHORITY, RAYDIUM_V4_PROGRAM, SOLANA_ATA_PROGRAM, SOLANA_MINT, SOLANA_RENT_PROGRAM, SOLANA_SERUM_PROGRAM, SOLANA_SYSTEM_PROGRAM, SURREAL_DB_URL};
 use crate::position::PositionConfig;
 use crate::ray_log::{RayLog, RayLogInfo};
 use crate::send_tx::{send_tx, SendTxConfig};
-use crate::trade::{Trade, TradePrice, TradeState};
-use chrono::Utc;
-use diesel::expression::array_comparison::In;
+use crate::trade::{Trade, TradePrice, TradeResponse, TradeResponseError, TradeState};
+use chrono::{DateTime, Utc};
 use futures::StreamExt;
-use log::{error, info, warn};
+use log::{error, info, warn, Level};
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use serde_json::json;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Signature;
-use solana_sdk::signer::Signer;
 use std::collections::HashMap;
 use std::str::FromStr;
+use anyhow::anyhow;
+use serde::{Deserialize, Serialize};
+use surrealdb::opt::auth::Root;
+use tokio::fs::{File, OpenOptions};
+use tokio::io::{AsyncReadExt, BufReader};
 use tokio::sync::mpsc::Receiver;
 use tokio::time::Instant;
 use yellowstone_grpc_proto::geyser::subscribe_update::UpdateOneof;
@@ -23,9 +26,11 @@ use yellowstone_grpc_proto::geyser::{
     SubscribeRequest, SubscribeRequestFilterTransactions, SubscribeUpdateTransactionInfo,
 };
 use yellowstone_grpc_proto::prelude::{
-    Message, SubscribeUpdate, SubscribeUpdateTransaction, Transaction, TransactionStatusMeta,
+    Message, SubscribeUpdate, SubscribeUpdateTransaction, Transaction,
 };
 use yellowstone_grpc_proto::tonic::Status;
+use crate::db::SdbImpl;
+
 
 #[derive(Clone)]
 pub struct Chan {
@@ -51,9 +56,7 @@ pub struct InterestedTx {
 
 fn decode_tx(
     update: Result<SubscribeUpdate, Status>,
-    trades: &HashMap<String, Trade>,
-    open_txs: &[String],
-    close_txs: &[String],
+    mints: &HashMap<Pubkey, Trade>,
 ) -> Option<InternalCommand> {
     if let Ok(SubscribeUpdate {
         update_oneof:
@@ -89,7 +92,7 @@ fn decode_tx(
             .accounts
             .iter()
             .find_map(|x| {
-                trades.get(&x.to_string())
+                mints.get(&x)
             });
         let mut logs_iter = meta.log_messages.iter();
 
@@ -115,45 +118,17 @@ fn decode_tx(
     }
 }
 
-pub async fn bg_chan(mut rec: Receiver<InternalCommand>) {
-    let pg = pg_conn().await;
-    let mut c = pg.get().await.unwrap();
-    let mut insert_prices = Vec::<TradePrice>::new();
-    let mut update_trades = HashMap::<String, Trade>::new();
-    while let Some(message) = rec.recv().await {
-        match message {
-            InternalCommand::InsertTrade(trade) => {
-                trade.insert(&mut c).await.unwrap();
-            }
-            InternalCommand::InsertPrice(price) => {
-                insert_prices.push(price);
-                insert_prices.clear();
-                // if insert_prices.len() > 20 {
-                //     TradePrice::insert_bulk(&mut c, insert_prices).await.unwrap();
-                //     insert_prices = vec![];
-                // }
-            }
-            InternalCommand::UpdateTrade(trade) => {
-                update_trades.insert(trade.pool_id.clone(), trade);
-                let trades = update_trades.values().cloned().collect::<Vec<_>>();
-                Trade::upsert_bulk(&mut c, trades).await.unwrap();
-                update_trades.clear();
-            }
-            InternalCommand::StopWatchTrade(mut trade) => {
-                trade.exit_time = Some(Utc::now());
-                Trade::upsert_bulk(&mut c, vec![trade]).await.unwrap();
-            }
-            _ => {}
-        }
-    }
-}
-
-fn poll_trade_and_cmd(
+fn poll_trade_and_cmd<F,F2>(
     signature: Signature,
     chan: Chan,
-    status: InternalCommand,
+    trade:Trade,
     log_action: String,
-) {
+    handle_err: F,
+    handle_success: F2,
+) where
+    F: Fn(Chan,Trade,Option<anyhow::Error>)+Send+'static,
+    F2: Fn(Chan,Trade,Option<anyhow::Error>)+Send+'static,
+{
     tokio::spawn(async move {
         let mut err = false;
         let mut err_msg = None;
@@ -166,16 +141,38 @@ fn poll_trade_and_cmd(
             let res = rpc.get_signature_status(&signature).await;
             if let Ok(Some(Ok(_))) = res {
                 info!("{log_action} poll success");
+                handle_success(chan,trade, None);
+                return;
             } else {
                 err = true;
                 err_msg = Some(format!("{:?}", res));
             }
         }
         if err {
-            error!("could not {log_action} {:?}", err_msg);
-            chan.trade.try_send(status).unwrap();
+            let e = anyhow!("could not {log_action} {:?}", err_msg);
+            handle_err(chan,trade, Some(e));
         }
     });
+}
+
+#[derive(Serialize,Deserialize,Debug,Default,Clone)]
+pub struct TradeChanLog {
+    pub signature: Option<Signature>,
+    pub trade_price:Option<TradePrice>,
+    pub trade: Trade,
+    pub ray_log: Option<RayLog>,
+    pub error: Option<String>,
+    pub dt: DateTime<Utc>,
+}
+
+#[derive(Serialize,Deserialize,Debug,Default)]
+pub enum TradeLevel {
+    Error = 1,
+    Warn,
+    #[default]
+    Info,
+    Debug,
+    Trace,
 }
 
 /// example of swap_base_in log
@@ -186,47 +183,50 @@ fn poll_trade_and_cmd(
 /// pool swap - https://solscan.io/tx/SggjhnEzULzofBb6njNaaFP7T31z6uddrx2ibafA6FhpQxuifEoYh2WiRWgg5geysqRkiAuhS7esgDMxLxtmTp5
 /// SwapBaseOutLog { log_type: 4, max_in: 2955714285, amount_out: 2364571428, direction: 1, user_source: 10000000, pool_coin: 171880473738872568, pool_pc: 843000100000, deduct_in: 11628 }
 pub async fn trade_chan(chan: Chan, mut rec: Receiver<InternalCommand>) {
-    let pg = pg_conn().await;
-    let mut c = pg.get().await.unwrap();
-    let db = surrealdb::Surreal::new::<surrealdb::engine::remote::ws::Ws>(SURREAL_DB_URL).await.unwrap();
-    db.use_ns("wt").use_db("wt").await.unwrap();
-
+    let mut heartbeat = Instant::now();
     let kp = get_keypair();
-    let pubkey = kp.pubkey();
     let max_positions = 1;
-    let mut price_id = TradePrice::id(&mut c).await;
-    let mut trades = Trade::get_all(&mut c)
-        .await
+    let mut price_id = 0;
+    let mut trades_file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open("trades.json")
+        .await.unwrap();
+    let mut contents = String::new();
+    trades_file.read_to_string(&mut contents).await.unwrap();
+    let trades = serde_json::from_str::<Vec<Trade>>(&contents)
+        .unwrap_or(vec![]);
+    let mut trade_id = trades.len() as i64;
+    let mut cache = trades
         .into_iter()
         .filter(|x| x.exit_time.is_none())
-        .map(|x| (x.pool_id.clone(), x))
+        .map(|x| (x.id.clone(), x))
         .collect::<HashMap<_, _>>();
-    let mut open_txs = vec![];
-    let mut close_txs = vec![];
+    let mut mints = cache.values().map(|x|(x.mint(), x.clone()))
+        .collect::<HashMap<_, _>>();
 
     let mut external_trade = None;
-    info!("active trades {}", trades.len());
+    info!("active trades {}", cache.len());
+
     let cfg = PositionConfig {
-        min_sol: dec!(0.008),
-        max_sol: dec!(0.01),
+        min_sol: dec!(0.02),
+        max_sol: dec!(0.03),
         ata_fee: dec!(0.00203928),
         jito: dec!(0.001),
         close_trade_fee: dec!(0.00203928),
         priority_fee: dec!(20_00000), // 0.0007 SOL
         base_fee: dec!(0.000005),
     };
-    let geyser = yellowstone_grpc_client::GeyserGrpcClient::build_from_static(SOLANA_GRPC_URL);
+    let geyser = geyser();
     let mut c = geyser.connect().await.unwrap();
     let r = SubscribeRequest {
         transactions: vec![(
             "client".to_string(),
             SubscribeRequestFilterTransactions {
-                vote: None,
-                failed: Some(false),
-                signature: None,
                 account_include: vec![RAYDIUM_V4_PROGRAM.to_string(), PUMP_PROGRAM.to_string()],
-                account_exclude: vec![],
-                account_required: vec![],
+                failed: Some(false),
+                ..Default::default()
             },
         )]
         .into_iter()
@@ -235,11 +235,9 @@ pub async fn trade_chan(chan: Chan, mut rec: Receiver<InternalCommand>) {
     };
 
     let (_subscribe_tx, mut stream) = c.subscribe_with_request(Some(r.clone())).await.unwrap();
-    let mut heartbeat = Instant::now();
 
     while let Some(message) = stream.next().await {
-        let mut output = json!({});
-        let mut err = false;
+        let mut trade_log = TradeChanLog::default();
 
         if heartbeat.elapsed().as_secs() > 30 {
             info!("heartbeat {:?}", heartbeat.elapsed());
@@ -251,47 +249,61 @@ pub async fn trade_chan(chan: Chan, mut rec: Receiver<InternalCommand>) {
                 InternalCommand::ExternalTrade(trade) => {
                     external_trade = Some(trade);
                 }
-                InternalCommand::AddTxOpen(Trade{tx_in_id,state,pool_id,..}) => {
-                    let mut trade = trades.get_mut(&pool_id).unwrap();
-                    // trade.tx_in_ids.push(tx_in_id);
-                    if trade.state != TradeState::PositionFilled {
-                        trade.state = TradeState::PositionPendingFill;
+                InternalCommand::BuyTradeFail {
+                    trade:Trade{id,..},
+                    error
+                } => {
+                    let mut trade = cache.get(&id).unwrap().clone();
+                    trade.buy_attempts += 1;
+                    cache.insert(id, trade.clone());
+                    if trade.buy_attempts == 5 {
+                        trade.state = TradeState::BuyFailed;
+                        mints.remove(&trade.mint());
+                        cache.remove(&id);
+                        error!("buy trade failed {trade_log:?}");
                     }
+                    let trade_log = TradeChanLog{
+                        trade: trade.clone(),
+                        dt: Utc::now(),
+                        error: Some(error.to_string()),
+                        ..Default::default()
+                    };
+                    chan.bg.try_send(InternalCommand::LogTrade(trade_log)).unwrap();
                 }
-                InternalCommand::AddTxClose(Trade{tx_out_id,state,pool_id,..}) => {
-                    let mut trade = trades.get_mut(&pool_id).unwrap();
-                    // trade.tx_out_ids.push(tx_out_id);
-                    if trade.state != TradeState::PositionClosed {
-                        trade.state = TradeState::PositionPendingClose;
+                InternalCommand::SellTradeFail {
+                    trade: Trade{id,sell_id,..},
+                    error
+                } => {
+                    let mut trade = cache.get(&id).unwrap().clone();
+                    trade.sell_attempts += 1;
+                    cache.insert(id, trade.clone());
+                    if trade.sell_attempts == 5 {
+                        trade.state = TradeState::SellFailed;
+                        mints.remove(&trade.mint());
+                        cache.remove(&id);
+                        error!("sell trade failed {trade_log:?}");
                     }
-                }
-                InternalCommand::StopWatchTrade(trade) => {
-                    info!("discarding trade");
-                    trades.remove(&trade.pool_id);
-                    chan.bg
-                        .try_send(InternalCommand::StopWatchTrade(trade))
-                        .unwrap();
-                    info!("trades now {}", trades.len());
-                }
-                InternalCommand::RevertPendingTrade(mut trade) => {
-                    info!("retrying trade status");
-                    trade.state = TradeState::PositionFilled;
-                    trades.insert(trade.pool_id.clone(), trade);
+                    let trade_log = TradeChanLog{
+                        trade: trade.clone(),
+                        dt: Utc::now(),
+                        error: Some(error.to_string()),
+                        ..Default::default()
+                    };
+                    chan.bg.try_send(InternalCommand::LogTrade(trade_log)).unwrap();
                 }
                 _ => {}
             }
         }
 
-        let maybe_cmd = decode_tx(message, &trades);
+        let maybe_cmd = decode_tx(message, &mints);
         match maybe_cmd {
-            Some(InternalCommand::TradeState { mut trade, interested_tx: tx, }) => {
-                output["signature"] = json!(tx.signature.to_string());
+            Some(InternalCommand::TradeState { mut trade, interested_tx: InterestedTx{accounts:_,logs,signature,..}, }) => {
+                trade_log.signature = Some(signature);
 
-                let signature = tx.signature;
-                let ray_log = RayLog::from_log(tx.logs.clone());
+                let ray_log = RayLog::from_log(logs.clone());
+                trade_log.ray_log = Some(ray_log.clone());
                 if let RayLogInfo::Withdraw(q) = &ray_log.log {
-                    output["log"] = json!(ray_log);
-                    warn!("{output}");
+                    warn!("{q:?}");
                     continue;
                 }
 
@@ -300,19 +312,23 @@ pub async fn trade_chan(chan: Chan, mut rec: Receiver<InternalCommand>) {
                 let trade_price = trade.update_from_ray_log(&ray_log, price_id, false);
                 price_id += 1;
                 let next_trade_price = trade.update_from_ray_log(&ray_log, price_id, true);
+                trade_log.trade_price = Some(next_trade_price.clone());
+                chan.bg
+                    .try_send(InternalCommand::InsertPrice(next_trade_price.clone()))
+                    .unwrap();
 
                 match trade.state {
-                    TradeState::PositionPendingFill => {
-                        if &tx.signature.to_string() == trade.tx_in_id.as_ref().unwrap() {
+                    TradeState::PendingBuy => {
+                        if trade.buy_ids.contains(&signature.to_string()) {
                             trade.entry_time = Some(Utc::now());
                             trade.entry_price = Some(trade_price.price);
                             trade.state = TradeState::PositionFilled;
                             trade.amount = Decimal::from(amount_out);
-                            trades.insert(trade.pool_id.clone(), trade.clone());
-                            output["trade"] = json!(trade);
-                            output["trade_price"] = json!(trade_price);
-                            output["next_trade_price"] = json!(next_trade_price);
-                            output["log"] = json!(ray_log);
+                            trade.buy_id = Some(signature.to_string());
+                            cache.insert(trade.id, trade.clone());
+
+                            trade_log.trade = trade.clone();
+                            chan.bg.try_send(InternalCommand::LogTrade(trade_log)).unwrap();
                             // info!(
                             //     "please look at this! {:?}",
                             //     m.account_keys.len()
@@ -328,98 +344,97 @@ pub async fn trade_chan(chan: Chan, mut rec: Receiver<InternalCommand>) {
                             //         info!("{:?}", zz.accounts);
                             //     },
                             // );
-                            chan.bg
-                                .try_send(InternalCommand::InsertPrice(trade_price))
-                                .unwrap();
                         }
                     }
                     TradeState::PositionFilled => {
                         let entry_price = trade.entry_price.unwrap();
-                        trade.pct =
-                            (next_trade_price.price - entry_price) / entry_price * dec!(100);
-                        trades.insert(trade.pool_id.clone(), trade.clone());
+                        trade.pct = (next_trade_price.price - entry_price) / entry_price * dec!(100);
+                        cache.insert(trade.id, trade.clone());
 
-                        output["pct"] = json!(trade.pct);
-                        output["mint"] = json!(trade.mint());
-                        output["trade_price"] = json!(trade_price);
-                        output["next_trade_price"] = json!(next_trade_price);
+                        trade_log.trade = trade.clone();
+                        chan.bg.try_send(InternalCommand::LogTrade(trade_log)).unwrap();
 
                         if trade.pct > dec!(5) || trade.pct < dec!(-1) {
                             let trade_req = trade.create_position(next_trade_price.price, cfg, false);
                             trade = trade_req.trade.clone();
                             warn!("spamming close");
 
-                            let c = chan.clone();
-                            let chan = c.clone();
                             let mut futs = send_tx(trade_req, Some(SendTxConfig{ jito_tip: cfg.jito, })).await;
                             while let Some(Ok(s)) = futs.next().await {
                                 match s {
-                                    Ok(trade_res) => {
-                                        trade = trade_res.trade;
-                                        let sig = Signature::from_str(trade_res.sig.as_str()).unwrap();
-                                        close_txs.push(Some(trade_res.sig));
+                                    Ok(TradeResponse{mut trade,sig,..}) => {
+                                        trade.sell_ids.push(sig.clone());
                                         if trade.state != TradeState::PositionClosed {
                                             trade.state = TradeState::PositionPendingClose;
                                         }
-                                        trades.insert(trade.pool_id.clone(), trade.clone());
-                                        // chan.trade.try_send(InternalCommand::AddTxClose(trade.clone())).unwrap();
+                                        cache.insert(trade.id.clone(), trade.clone());
+
                                         poll_trade_and_cmd(
-                                            sig,
+                                            signature,
                                             chan.clone(),
-                                            InternalCommand::RevertPendingTrade(trade.clone()),
+                                            trade.clone(),
                                             "close position".to_string(),
+                                            |chan,trade,error|{
+                                                chan.trade.try_send(
+                                                    InternalCommand::SellTradeFail {
+                                                        trade,
+                                                        error:error.unwrap()
+                                                    },
+                                                ).unwrap()
+                                            },
+                                            |chan,trade,_|{
+                                                // chan.trade.try_send(
+                                                //     InternalCommand::SellTradeSuccess(trade),
+                                                // ).unwrap()
+                                            }
                                         );
                                     }
-                                    Err(e) => {
-                                        output["error"] = json!({
-                                                "message":"could not close trade",
-                                                "data": e.to_string()
-                                            });
-                                        err = true;
+                                    Err(TradeResponseError{trade:_trade,error}) => {
+                                        trade = _trade;
+                                        chan.trade.try_send(
+                                            InternalCommand::SellTradeFail {
+                                                trade,
+                                                error
+                                            },
+                                        ).unwrap();
                                     }
                                 }
                             }
                         }
                     }
                     TradeState::PositionPendingClose => {
-                        if tx.accounts.iter().any(|x| x == &pubkey) {
+                        if trade.sell_ids.contains(&signature.to_string()) {
                             trade.state = TradeState::PositionClosed;
+                            trade.sell_id = Some(signature.to_string());
                             trade.exit_time = Some(Utc::now());
                             trade.exit_price = Some(trade_price.price);
-                            trades.insert(trade.pool_id.clone(), trade.clone());
-                            output["trade"] = json!(trade);
+                            cache.insert(trade.id, trade.clone());
+
+                            trade_log.trade = trade.clone();
+                            chan.bg.try_send(InternalCommand::LogTrade(trade_log)).unwrap();
                         }
                     }
                     TradeState::PositionClosed => {
-                        trades.remove(&trade.id);
+                        mints.remove(&trade.mint());
+                        cache.remove(&trade.id);
                     }
                     _ => {}
                 }
-
-
-                let r = chan
-                    .bg
-                    .try_send(InternalCommand::UpdateTrade(trade.clone()));
-                if r.is_err() {
-                    error!("update trade error {:?}", r);
-                }
-                chan.bg
-                    .try_send(InternalCommand::InsertPrice(next_trade_price))
-                    .unwrap();
-
-                if err {
-                    error!("{output}");
-                } else {
-                    info!("{output}");
-                }
             }
-            Some(InternalCommand::PumpMigration(tx)) => {
-                let accounts = tx.message.instructions.iter().find_map(|x| {
+            Some(InternalCommand::PumpMigration(InterestedTx{accounts,signature,logs,message})) => {
+                trade_log.signature = Some(signature);
+
+                if cache.len() >= max_positions {
+                    info!("can't trade new, previous already in progress");
+                    continue;
+                }
+
+                let accounts_maybe = message.instructions.iter().find_map(|x| {
                     if x.accounts.len() == 21 {
                         let keys_maybe = x
                             .accounts
                             .iter()
-                            .filter_map(|&index| tx.accounts.get(index as usize))
+                            .filter_map(|&index| accounts.get(index as usize))
                             .collect::<Vec<_>>();
 
                         if keys_maybe.len() != 21 {
@@ -468,67 +483,77 @@ pub async fn trade_chan(chan: Chan, mut rec: Receiver<InternalCommand>) {
                         None
                     }
                 });
-                if accounts.is_none() {
+
+                if accounts_maybe.is_none() {
                     continue;
                 }
 
-                let accounts = accounts.unwrap();
-                let ray_log = RayLog::from_log(tx.logs.clone());
+                let valid_accounts= accounts_maybe.unwrap().into_iter().cloned().collect::<Vec<_>>();
+                let ray_log = RayLog::from_log(logs.clone());
                 let mut trade = Trade::from_solana_account_grpc(
-                    accounts.iter().cloned().cloned().collect::<Vec<_>>().as_slice(),
-                    tx.signature.to_string(),
+                    valid_accounts.as_slice(),
                 );
+                trade_id += 1;
+                trade.id = trade_id;
+                trade.root_kp = kp.to_bytes().to_vec();
+                let trade_price = trade.update_from_ray_log(&ray_log, price_id, false);
+                trade_log.trade_price = Some(trade_price.clone());
+                let price = trade_price.price;
+
+                // DEAL WITH THIS LATER
                 if &trade.user_wallet != &PUMP_MIGRATION.to_string() {
-                    info!("not a pump coin {:?} {:?}",tx.signature, trade);
+                    // info!("not a pump coin {:?} {:?}",signature, trade);
                     continue;
                 }
-                trade.root_kp = kp.to_bytes().to_vec();
-                info!("init_log {:?}", ray_log.log);
-                info!("trade:init {:?}", trade);
 
-                let trade_price = trade.update_from_ray_log(&ray_log, price_id, false);
-
-                info!("trade_price {trade_price:?}");
-                let price = trade_price.price;
 
                 let trade_req = trade.create_position(price, cfg, true);
                 let mut futs = send_tx(trade_req, Some(SendTxConfig{ jito_tip: cfg.jito, })).await;
                 while let Some(Ok(s)) = futs.next().await {
                     match s {
-                        Ok(mut trade_res) => {
-                            trade = trade_res.trade;
-                            let sig = trade_res.sig;
+                        Ok(TradeResponse{trade:_trade,sig,..}) => {
+                            trade = _trade;
                             let signature = solana_sdk::signature::Signature::from_str(&sig.as_str()).unwrap();
-                            // trade_res.trade.tx_in_id = Some(sig);
-                            open_txs.push(Some(sig));
-                            trades.insert(trade.pool_id.clone(), trade.clone());
-                            // chan.trade
-                            //     .try_send(InternalCommand::AddTxOpen(trade_res.trade.clone()))
-                            //     .unwrap();
-                            chan.bg
-                                .try_send(InternalCommand::InsertTrade(trade.clone()))
-                                .unwrap();
+                            trade.buy_ids.push(sig);
+                            trade.state = TradeState::PendingBuy;
+                            cache.insert(trade.id.clone(), trade.clone());
+
                             poll_trade_and_cmd(
                                 signature,
                                 chan.clone(),
-                                InternalCommand::StopWatchTrade(trade),
+                                trade.clone(),
                                 "open position".to_string(),
+                                |chan,trade,error|{
+                                    chan.trade.try_send(
+                                        InternalCommand::BuyTradeFail {
+                                            trade,
+                                            error:error.unwrap()
+                                        },
+                                    ).unwrap()
+                                },
+                                |chan,trade,_|{
+                                    // chan.trade.try_send(
+                                    //     InternalCommand::BuyTradeSuccess(trade),
+                                    // ).unwrap()
+                                }
                             );
                         }
-                        Err(e) => {
-                            output["error"] = json!({
-                                                "message":"could not close trade",
-                                                "data": format!("{:?}", e),
-                                            });
-                            err = true;
+                        Err(TradeResponseError{trade:_trade,error}) => {
+                            trade = _trade;
+                            trade_log.error = Some(error.to_string());
+                            chan.trade.try_send(
+                                InternalCommand::BuyTradeFail {
+                                    trade:trade.clone(),
+                                    error
+                                },
+                            ).unwrap()
                         }
                     }
-
+                    trade_log.trade = trade;
                 }
-                if err {
-                    error!("{output}");
-                } else {
-                    info!("{output}");
+
+                if trade_log.error.is_none() {
+                    info!("{trade_log:?}");
                 }
             }
             _ => {}

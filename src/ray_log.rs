@@ -4,7 +4,7 @@ use base64::Engine;
 use raydium_amm::log::{InitLog, LogType, SwapBaseInLog, SwapBaseOutLog, WithdrawLog};
 use raydium_amm::math::SwapDirection;
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct RayLog {
     pub next_pc: u64,
     pub next_coin: u64,
@@ -14,12 +14,14 @@ pub struct RayLog {
     pub log: RayLogInfo
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize,)]
+#[derive(Debug, Clone, Serialize, Deserialize,Default)]
 pub enum RayLogInfo {
     SwapBaseIn(SwapBaseInLog),
     SwapBaseOut(SwapBaseOutLog),
     Withdraw(WithdrawLog),
     InitLog(InitLog),
+    #[default]
+    Empty
 }
 
 impl RayLog {

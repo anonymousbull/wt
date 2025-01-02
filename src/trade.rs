@@ -1,15 +1,9 @@
-use std::cmp::{max, min};
-use crate::constant::{RAYDIUM_V4_AUTHORITY, RAYDIUM_V4_PROGRAM, SOLANA_MINT_STR};
-use crate::implement_diesel;
+use crate::constant::{Sdb, RAYDIUM_V4_AUTHORITY, RAYDIUM_V4_PROGRAM, SOLANA_MINT_STR};
+use crate::db::SdbImpl;
 use crate::position::PositionConfig;
+use crate::ray_log::{RayLog, RayLogInfo};
+use crate::send_tx::{SendTx, SendTxConfig};
 use chrono::{DateTime, Utc};
-use crate::util::diesel_export::*;
-use diesel::backend::Backend;
-use diesel::deserialize::FromSql;
-use diesel::serialize::{Output, ToSql};
-use diesel::sql_types::Integer;
-use diesel::{deserialize, serialize, AsChangeset, AsExpression, FromSqlRow, Identifiable, Insertable, Queryable, Selectable};
-use log::{info};
 use raydium_amm::solana_program::native_token::{sol_to_lamports, LAMPORTS_PER_SOL};
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::{Decimal, MathematicalOps};
@@ -18,21 +12,17 @@ use serde::{Deserialize, Serialize};
 use solana_sdk::compute_budget::ComputeBudgetInstruction;
 use solana_sdk::instruction::{AccountMeta, Instruction};
 use solana_sdk::pubkey::Pubkey;
-use solana_sdk::signature::{Keypair};
+use solana_sdk::signature::Keypair;
 use solana_sdk::signer::Signer;
-use spl_associated_token_account_client::address::get_associated_token_address_with_program_id;
-use std::str::FromStr;
-use jito_sdk_rust::JitoJsonRpcSDK;
 use solana_sdk::transaction::Transaction;
-use crate::ray_log::{RayLog, RayLogInfo};
-use crate::send_tx::{SendTx, SendTxConfig};
+use spl_associated_token_account_client::address::get_associated_token_address_with_program_id;
+use std::cmp::{max, min};
+use std::str::FromStr;
+use anyhow::Error;
 
-#[derive(Queryable, Selectable, Insertable, AsChangeset, Identifiable)]
-#[diesel(table_name = crate::schema::trades)]
-#[diesel(check_for_backend(diesel::pg::Pg))]
-#[derive(Clone, Debug, PartialEq, Eq, Hash,Serialize,Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash,Serialize,Deserialize,Default)]
 pub struct Trade {
-    pub id: String,
+    pub id: i64,
     pub coin_vault: String,
     pub pc_vault: String,
     pub coin_mint: String,
@@ -49,8 +39,8 @@ pub struct Trade {
     pub pct: Decimal,
     pub state: TradeState,
 
-    pub tx_in_id:Option<String>,
-    pub tx_out_id:Option<String>,
+    pub buy_id:Option<String>,
+    pub sell_id:Option<String>,
     pub sol_before: Decimal,
     pub sol_after: Option<Decimal>,
 
@@ -59,22 +49,36 @@ pub struct Trade {
     // pub pump_curve_id: String,
     pub user_wallet: String,
 
+    pub buy_ids:Vec<String>,
+    pub sell_ids:Vec<String>,
+    pub buy_attempts: i64,
+    pub sell_attempts: i64,
 }
 
-#[derive(Queryable, Selectable, Insertable, AsChangeset, Identifiable)]
-#[diesel(table_name = crate::schema::trade_prices)]
-#[diesel(check_for_backend(diesel::pg::Pg))]
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct TradePrice {
     pub id: i64,
-    pub trade_id: String,
+    pub trade_id: i64,
     pub price: Decimal,
     pub tvl: Decimal,
 }
 
-implement_diesel!(Trade, trades);
-implement_diesel!(TradePrice, trade_prices);
-
+impl SdbImpl for Trade {
+    fn table_name() -> &'static str {
+        "trades"
+    }
+    fn field_id(&self) -> i64 {
+        self.id
+    }
+}
+impl SdbImpl for TradePrice {
+    fn table_name() -> &'static str {
+        "trade_prices"
+    }
+    fn field_id(&self) -> i64{
+        self.id
+    }
+}
 
 #[derive(Clone)]
 pub struct TradeRequest {
@@ -90,52 +94,21 @@ pub struct TradeResponse {
     pub sig: String
 }
 
+pub type TradeResponseResult = Result<TradeResponse, TradeResponseError>;
+
 #[repr(i32)]
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, AsExpression, FromSqlRow, Eq, PartialEq, Hash)]
-#[diesel(sql_type = Integer)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, PartialEq, Hash, Default)]
 pub enum TradeState {
     Init = 1,
     PositionRequest = 2,
-    PositionPendingFill = 3,
+    PendingBuy = 3,
     PositionFilled = 4,
     PositionPendingClose = 5,
     PositionClosed = 6,
-}
-
-
-impl<DB> ToSql<Integer, DB> for TradeState
-where
-    DB: Backend,
-    i32: ToSql<Integer, DB>,
-{
-    fn to_sql<'b>(&'b self, out: &mut Output<'b, '_, DB>) -> serialize::Result {
-        match self {
-            TradeState::Init => 1.to_sql(out),
-            TradeState::PositionRequest => 2.to_sql(out),
-            TradeState::PositionPendingFill => 3.to_sql(out),
-            TradeState::PositionFilled => 4.to_sql(out),
-            TradeState::PositionPendingClose => 5.to_sql(out),
-            TradeState::PositionClosed => 6.to_sql(out),
-        }
-    }
-}
-
-impl<DB> FromSql<Integer, DB> for TradeState
-where
-    DB: Backend,
-    i32: FromSql<Integer, DB>,
-{
-    fn from_sql(bytes: DB::RawValue<'_>) -> deserialize::Result<Self> {
-        match i32::from_sql(bytes)? {
-            1 => Ok(TradeState::Init),
-            2 => Ok(TradeState::PositionRequest),
-            3 => Ok(TradeState::PositionPendingFill),
-            4 => Ok(TradeState::PositionFilled),
-            5 => Ok(TradeState::PositionPendingClose),
-            6 => Ok(TradeState::PositionClosed),
-            x => Err(format!("Unrecognized variant {}", x).into()),
-        }
-    }
+    BuyFailed,
+    SellFailed,
+    #[default]
+    Empty
 }
 
 
@@ -144,9 +117,22 @@ struct PriceTvl {
     price: Decimal,
 }
 
+#[derive(Debug)]
+pub struct TradeResponseError {
+    pub trade: Trade,
+    pub error: Error,
+}
+
+impl std::fmt::Display for TradeResponseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "TradeResponseError: {}", self.error)
+    }
+}
+
 
 impl TradeRequest {
-    pub async fn send_tx<T:SendTx>(mut self,rpc:T, send_tx_cfg:Option<SendTxConfig>)->anyhow::Result<TradeResponse>{
+    pub async fn send_tx<T:SendTx>(self,rpc:T, send_tx_cfg:Option<SendTxConfig>)->Result<TradeResponse,TradeResponseError>{
+        let trade = self.trade.clone();
         let tx = if let Some(send_tx_cfg) = &send_tx_cfg {
             let jito_instructions = vec![
                 &self.instructions[..],
@@ -180,6 +166,9 @@ impl TradeRequest {
                 trade: self.trade,
                 instructions: self.instructions,
                 sig,
+            })
+            .map_err(|error|TradeResponseError{
+                trade,error
             })
     }
 }
@@ -235,41 +224,17 @@ impl Trade {
 
         TradePrice{
             id: price_id,
-            trade_id: self.id.clone(),
+            trade_id: self.id,
             price: price_tvl.price,
             tvl: price_tvl.tvl,
         }
     }
-    pub async fn get_by_pool(mut pg: &mut Object<AsyncPgConnection>, data: String) -> Self {
-        let start_time = ::std::time::Instant::now();
-        let a = crate::schema::trades::dsl::trades.filter(
-            crate::schema::trades::pool_id.eq(data)
-        ).first(&mut pg).await.unwrap();
-        let elapsed_time = start_time.elapsed();
-        info!("Time taken for get: {:?}",elapsed_time);
-        a
+    pub async fn get_by_pool(pg: &Sdb, data: String) -> Self {
+        let sql = format!("SELECT * FROM trades WHERE pool_id = {}",data);
+        let a =  pg.query(sql).await.unwrap().take::<Option<Trade>>(0).unwrap();
+        a.unwrap()
     }
-    pub async fn upsert_bulk(mut pg: &mut Object<AsyncPgConnection>, data: Vec<Self>) -> anyhow::Result<()> {
-        // let start_time = ::std::time::Instant::now();
-        diesel::insert_into(crate::schema::trades::table)
-            .values(&data)
-            .on_conflict(crate::schema::trades::id)
-            .do_update()
-            .set((
-                crate::schema::trades::pct.eq(diesel::upsert::excluded(crate::schema::trades::pct)),
-                crate::schema::trades::entry_price.eq(diesel::upsert::excluded(crate::schema::trades::entry_price)),
-                crate::schema::trades::exit_price.eq(diesel::upsert::excluded(crate::schema::trades::exit_price)),
-                crate::schema::trades::exit_time.eq(diesel::upsert::excluded(crate::schema::trades::exit_time)),
-                crate::schema::trades::state.eq(diesel::upsert::excluded(crate::schema::trades::state)),
-                crate::schema::trades::tx_in_id.eq(diesel::upsert::excluded(crate::schema::trades::tx_in_id)),
-                crate::schema::trades::tx_out_id.eq(diesel::upsert::excluded(crate::schema::trades::tx_out_id)),
-                crate::schema::trades::amount.eq(diesel::upsert::excluded(crate::schema::trades::amount)),
-            ))
-            .execute(&mut pg).await?;
-        // let elapsed_time = start_time.elapsed();
-        // info!("Time taken for bulk upsert: {} {} {:?}",data.len(), "trades", elapsed_time);
-        Ok(())
-    }
+
     pub fn sol_mint(&self) -> Pubkey {
         if self.coin_mint.as_str() == SOLANA_MINT_STR {
             Pubkey::from_str_const(self.coin_mint.as_str())
@@ -449,7 +414,7 @@ impl Trade {
                     exit_time: None,
                     pct: Default::default(),
                     state: TradeState::PositionRequest,
-                    tx_in_id: None,
+                    buy_id: None,
                     sol_before: cfg.total_normal(),
                     sol_after: None,
                     ..self.clone()
@@ -520,7 +485,7 @@ impl Trade {
         }
     }
 
-    pub fn from_solana_account_grpc(accounts: &[Pubkey],id:String) -> Self {
+    pub fn from_solana_account_grpc(accounts: &[Pubkey]) -> Self {
         let token_program_id = accounts[0].to_string();
         let amm = accounts[4].to_string();
         let coin_mint = accounts[8].to_string();
@@ -529,7 +494,7 @@ impl Trade {
         let pc_vault = accounts[11].to_string();
         let user_wallet = accounts[17].to_string();
         Self {
-            id,
+            id:Default::default(),
             pool_id: amm,
             coin_vault,
             pc_vault,
@@ -538,20 +503,8 @@ impl Trade {
             // VERY RISKY
             decimals: Default::default(),
             token_program_id,
-
-            amount: Default::default(),
-            entry_time: None,
-            entry_price: None,
-            exit_price: None,
-            exit_time: None,
-            pct: Default::default(),
-            state: TradeState::Init,
-            tx_in_id: None,
-            tx_out_id: None,
-            sol_before: Default::default(),
-            sol_after: None,
-            root_kp: vec![],
             user_wallet,
+            ..Default::default()
         }
     }
 }

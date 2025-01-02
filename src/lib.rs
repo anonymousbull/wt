@@ -1,5 +1,5 @@
 pub mod constant;
-pub mod util;
+pub mod db;
 pub mod trade;
 pub mod position;
 pub mod cmd;
@@ -8,3 +8,4 @@ pub mod send_tx;
 pub mod chan;
 pub mod ray_log;
 pub mod websocket_server;
+pub mod bg_chan;

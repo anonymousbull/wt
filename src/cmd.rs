@@ -1,11 +1,12 @@
-use crate::chan::InterestedTx;
+use crate::chan::{InterestedTx, TradeChanLog};
 use crate::trade::{Trade, TradePrice};
 
 
 #[derive(Debug)]
 pub enum InternalCommand {
-    AddTxOpen(Trade),
-    AddTxClose(Trade),
+    SellTradeSuccess(Trade),
+    BuyTradeSuccess(Trade),
+    LogTrade(TradeChanLog),
     TradeState {
         trade: Trade,
         interested_tx: InterestedTx
@@ -16,12 +17,18 @@ pub enum InternalCommand {
     PumpPrice,
     ExternalTrade(Trade),
     Log(String),
-    RevertPendingTrade(Trade),
+    SellTradeFail{
+        trade: Trade,
+        error: anyhow::Error,
+    },
     UpdateTrade(Trade),
     InsertTrade(Trade),
     UpdatePrice(TradePrice),
     InsertPrice(TradePrice),
-    StopWatchTrade(Trade),
+    BuyTradeFail{
+        trade: Trade,
+        error: anyhow::Error,
+    },
     WatchPool(String),
     PriceTvl(TradePrice),
     OnTrading,
