@@ -1,6 +1,3 @@
-use log::info;
-use crate::constant::Sdb;
-
 pub mod diesel_export {
     pub use diesel_async::pooled_connection::deadpool::Pool;
     pub use diesel_async::pooled_connection::AsyncDieselConnectionManager;
@@ -10,67 +7,65 @@ pub mod diesel_export {
     pub use diesel::prelude::*;
 }
 
-const TRADE_TABLE: &str = "trades";
-const TRADE_PRICE_TABLE: &str = "trade_prices";
-
-pub trait SdbImpl:Sized where Self: serde::de::DeserializeOwned+serde::Serialize +'static + Clone
-{
-
-    fn table_name() -> &'static str;
-    fn field_id(&self) -> i64;
-
-    async fn upsert_bulk(pg: &Sdb, data: Vec<Self>) -> anyhow::Result<()>{
-        let start_time = ::std::time::Instant::now();
-        for x in &data {
-            pg.upsert::<Option<Self>>((Self::table_name(),x.field_id()))
-                .content(x.clone())
-                .await?;
-        }
-        let elapsed_time = start_time.elapsed();
-        info!("Time taken for bulk upsert: {} {} {:?}",data.len(), Self::table_name(), elapsed_time);
-        Ok(())
-    }
-    async fn upsert(&self,pg: &surrealdb::Surreal<surrealdb::engine::remote::ws::Client>) -> anyhow::Result<()> {
-        // let start_time = ::std::time::Instant::now();
-        pg
-            .upsert::<Option<Self>>((Self::table_name(), self.field_id()))
-            .content(self.clone())
-            .await.unwrap();
-        // let elapsed_time = start_time.elapsed();
-        // log::info!("Time taken for bulk insert: {} {:?}", stringify!($table_name), elapsed_time);
-        Ok(())
-    }
-    async fn delete_one(&self, c: &surrealdb::Surreal<surrealdb::engine::remote::ws::Client>){
-        c.delete::<Option<Self>>((Self::table_name(), self.field_id())).await.unwrap();
-    }
-    async fn id(c: &surrealdb::Surreal<surrealdb::engine::remote::ws::Client>) -> i64 {
-        let sql = format!("SELECT count() FROM {}",Self::table_name());
-        let a = c
-            .query(sql)
-        .await.unwrap().take::<Option<serde_json::Value>>(0).unwrap();
-        a.unwrap_or(serde_json::json!({"count": 0}))["count"].as_i64().unwrap()
-    }
-    async fn insert_bulk(pg: &surrealdb::Surreal<surrealdb::engine::remote::ws::Client>, data: Vec<Self>) -> anyhow::Result<()> {
-        // let start_time = ::std::time::Instant::now();
-        pg.insert::<Vec<Self>>(Self::table_name()).content(vec![data]).await.unwrap();
-        // let elapsed_time = start_time.elapsed();
-        // log::info!("Time taken for bulk insert: {} {} {:?}",data.len(), stringify!($table_name), elapsed_time);
-        Ok(())
-    }
-    async fn insert(&self,pg: &surrealdb::Surreal<surrealdb::engine::remote::ws::Client>) -> anyhow::Result<()> {
-        // let start_time = ::std::time::Instant::now();
-        pg
-            .insert::<Option<Self>>((Self::table_name(), self.field_id()))
-            .content(self.clone())
-            .await.unwrap();
-        // let elapsed_time = start_time.elapsed();
-        // log::info!("Time taken for bulk insert: {} {:?}", stringify!($table_name), elapsed_time);
-        Ok(())
-    }
-    async fn get_all(c: &surrealdb::Surreal<surrealdb::engine::remote::ws::Client>) ->Vec<Self>{
-        c.select("trades").await.unwrap()
-    }
-}
+//
+// pub trait SdbImpl:Sized where Self: serde::de::DeserializeOwned+serde::Serialize +'static + Clone
+// {
+//
+//     fn table_name() -> &'static str;
+//     fn field_id(&self) -> i64;
+//
+//     async fn upsert_bulk(pg: &Sdb, data: Vec<Self>) -> anyhow::Result<()>{
+//         let start_time = ::std::time::Instant::now();
+//         for x in &data {
+//             pg.upsert::<Option<Self>>((Self::table_name(),x.field_id()))
+//                 .content(x.clone())
+//                 .await?;
+//         }
+//         let elapsed_time = start_time.elapsed();
+//         info!("Time taken for bulk upsert: {} {} {:?}",data.len(), Self::table_name(), elapsed_time);
+//         Ok(())
+//     }
+//     async fn upsert(&self,pg: &surrealdb::Surreal<surrealdb::engine::remote::ws::Client>) -> anyhow::Result<()> {
+//         // let start_time = ::std::time::Instant::now();
+//         pg
+//             .upsert::<Option<Self>>((Self::table_name(), self.field_id()))
+//             .content(self.clone())
+//             .await.unwrap();
+//         // let elapsed_time = start_time.elapsed();
+//         // log::info!("Time taken for bulk insert: {} {:?}", stringify!($table_name), elapsed_time);
+//         Ok(())
+//     }
+//     async fn delete_one(&self, c: &surrealdb::Surreal<surrealdb::engine::remote::ws::Client>){
+//         c.delete::<Option<Self>>((Self::table_name(), self.field_id())).await.unwrap();
+//     }
+//     async fn id(c: &surrealdb::Surreal<surrealdb::engine::remote::ws::Client>) -> i64 {
+//         let sql = format!("SELECT count() FROM {}",Self::table_name());
+//         let a = c
+//             .query(sql)
+//         .await.unwrap().take::<Option<serde_json::Value>>(0).unwrap();
+//         a.unwrap_or(serde_json::json!({"count": 0}))["count"].as_i64().unwrap()
+//     }
+//     async fn insert_bulk(pg: &surrealdb::Surreal<surrealdb::engine::remote::ws::Client>, data: Vec<Self>) -> anyhow::Result<()> {
+//         // let start_time = ::std::time::Instant::now();
+//         pg.insert::<Vec<Self>>(Self::table_name()).content(vec![data]).await.unwrap();
+//         // let elapsed_time = start_time.elapsed();
+//         // log::info!("Time taken for bulk insert: {} {} {:?}",data.len(), stringify!($table_name), elapsed_time);
+//         Ok(())
+//     }
+//     async fn insert(&self,pg: &surrealdb::Surreal<surrealdb::engine::remote::ws::Client>) -> anyhow::Result<()> {
+//         // let start_time = ::std::time::Instant::now();
+//         pg
+//             .insert::<Option<Self>>((Self::table_name(), self.field_id()))
+//             .content(self.clone())
+//             .await.unwrap();
+//         // let elapsed_time = start_time.elapsed();
+//         // log::info!("Time taken for bulk insert: {} {:?}", stringify!($table_name), elapsed_time);
+//         Ok(())
+//     }
+//     async fn get_all(c: &surrealdb::Surreal<surrealdb::engine::remote::ws::Client>) ->Vec<Self>{
+//         c.select("trades").await.unwrap()
+//     }
+// }
 
 
 

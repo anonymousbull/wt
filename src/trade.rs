@@ -1,8 +1,7 @@
-use crate::constant::{Sdb, RAYDIUM_V4_AUTHORITY, RAYDIUM_V4_PROGRAM, SOLANA_MINT_STR};
-use crate::db::SdbImpl;
+use crate::constant::{RAYDIUM_V4_AUTHORITY, RAYDIUM_V4_PROGRAM, SOLANA_MINT_STR};
 use crate::position::PositionConfig;
 use crate::ray_log::{RayLog, RayLogInfo};
-use crate::send_tx::{SendTx, SendTxConfig};
+use crate::rpc::{rpc1, Rpc, RpcResponse, RpcResponseData, RpcResponseMetric};
 use chrono::{DateTime, Utc};
 use raydium_amm::solana_program::native_token::{sol_to_lamports, LAMPORTS_PER_SOL};
 use rust_decimal::prelude::ToPrimitive;
@@ -12,15 +11,21 @@ use serde::{Deserialize, Serialize};
 use solana_sdk::compute_budget::ComputeBudgetInstruction;
 use solana_sdk::instruction::{AccountMeta, Instruction};
 use solana_sdk::pubkey::Pubkey;
-use solana_sdk::signature::Keypair;
+use solana_sdk::signature::{Keypair, Signature};
 use solana_sdk::signer::Signer;
 use solana_sdk::transaction::Transaction;
 use spl_associated_token_account_client::address::get_associated_token_address_with_program_id;
 use std::cmp::{max, min};
 use std::str::FromStr;
 use anyhow::Error;
+use base64::Engine;
+use log::info;
+use serde_json::json;
+use solana_client::rpc_config::RpcSendTransactionConfig;
+use solana_sdk::commitment_config::CommitmentLevel;
+use crate::solana::*;
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash,Serialize,Deserialize,Default)]
+#[derive(Clone, Debug,Serialize,Deserialize,Default)]
 pub struct Trade {
     pub id: i64,
     pub coin_vault: String,
@@ -51,8 +56,13 @@ pub struct Trade {
 
     pub buy_ids:Vec<String>,
     pub sell_ids:Vec<String>,
-    pub buy_attempts: i64,
-    pub sell_attempts: i64,
+    pub buy_attempts: usize,
+    pub sell_attempts: usize,
+
+    pub buy_logs: Vec<RpcResponse>,
+    pub sell_logs: Vec<RpcResponse>,
+    pub buy_log: Option<RpcResponse>,
+    pub sell_log: Option<RpcResponse>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
@@ -63,27 +73,13 @@ pub struct TradePrice {
     pub tvl: Decimal,
 }
 
-impl SdbImpl for Trade {
-    fn table_name() -> &'static str {
-        "trades"
-    }
-    fn field_id(&self) -> i64 {
-        self.id
-    }
-}
-impl SdbImpl for TradePrice {
-    fn table_name() -> &'static str {
-        "trade_prices"
-    }
-    fn field_id(&self) -> i64{
-        self.id
-    }
-}
 
 #[derive(Clone)]
 pub struct TradeRequest {
     pub trade: Trade,
     pub instructions: Vec<Instruction>,
+    pub config: PositionConfig,
+    pub gas_limit: Decimal,
 
 }
 
@@ -91,7 +87,8 @@ pub struct TradeRequest {
 pub struct TradeResponse {
     pub instructions: Vec<Instruction>,
     pub trade: Trade,
-    pub sig: String
+    pub sig: String,
+    pub rpc_response: RpcResponse,
 }
 
 pub type TradeResponseResult = Result<TradeResponse, TradeResponseError>;
@@ -102,8 +99,8 @@ pub enum TradeState {
     Init = 1,
     PositionRequest = 2,
     PendingBuy = 3,
-    PositionFilled = 4,
-    PositionPendingClose = 5,
+    BuySuccess = 4,
+    PendingSell = 5,
     PositionClosed = 6,
     BuyFailed,
     SellFailed,
@@ -129,47 +126,153 @@ impl std::fmt::Display for TradeResponseError {
     }
 }
 
-
 impl TradeRequest {
-    pub async fn send_tx<T:SendTx>(self,rpc:T, send_tx_cfg:Option<SendTxConfig>)->Result<TradeResponse,TradeResponseError>{
-        let trade = self.trade.clone();
-        let tx = if let Some(send_tx_cfg) = &send_tx_cfg {
-            let jito_instructions = vec![
-                &self.instructions[..],
-                &vec![
-                    solana_sdk::system_instruction::transfer(
-                        &self.trade.root_kp().pubkey(),
-                        &solana_sdk::pubkey::Pubkey::from_str_const(crate::constant::JITO_TIPS[fastrand::usize(..crate::constant::JITO_TIPS.len())]),
-                        sol_to_lamports(send_tx_cfg.jito_tip.to_f64().unwrap()),
-                    ),
-                ][..]
-            ].concat();
-            Transaction::new_signed_with_payer(
-                &jito_instructions,
-                Some(&self.trade.root_kp().pubkey()),
-                &[self.trade.root_kp()],
-                T::get_latest_blockhash().await.expect("yoo"),
-            )
+    pub async fn build_tx_and_send(self, rpc:Rpc) -> TradeResponseResult {
+       let lamports_per_sol_dec = lamports_per_sol_dec();
+       let micro_lamports_per_sol_dec = micro_lamports_per_sol_dec();
+
+        let hash = if let Rpc::General {rpc:read_rpc,..} = rpc1() {
+            read_rpc.get_latest_blockhash().await.unwrap()
         } else {
-            Transaction::new_signed_with_payer(
-                &self.instructions,
-                Some(&self.trade.root_kp().pubkey()),
-                &[self.trade.root_kp()],
-                T::get_latest_blockhash().await.expect("yoo"),
-            )
+            unreachable!()
         };
+        let one = dec!(1);
 
-        // self.trade.state = TradeState::PositionPendingFill;
+        match rpc {
+            Rpc::Jito { rpc,info,.. } => {
+                // The priority fee should equal our fee split
+                // and it should be higher than average
 
-        rpc.send_tx(tx,send_tx_cfg).await
-            .map(|sig|TradeResponse {
-                trade: self.trade,
-                instructions: self.instructions,
-                sig,
-            })
-            .map_err(|error|TradeResponseError{
-                trade,error
-            })
+                let jito_fee_sol_normal = (self.config.jito_tip_percent / dec!(2)) * self.config.fee();
+                let jito_fee_sol = jito_fee_sol_normal * lamports_per_sol_dec;
+
+                let pfee_sol_normal = (self.config.jito_priority_percent / dec!(2)) * self.config.fee();
+                let pfee_micro_sol = pfee_sol_normal * micro_lamports_per_sol_dec;
+
+
+                let gas_price = pfee_micro_sol / self.gas_limit;
+                info!("max fees {}",self.config.tp());
+                info!("jito fee {}",jito_fee_sol_normal);
+                info!("pfee fee {}",pfee_sol_normal);
+                info!("pfee_micro_sol {}",pfee_micro_sol);
+                info!("gas limit {}",self.gas_limit);
+                info!("gas price {}",gas_price);
+                info!("jito ix value {}",jito_fee_sol.to_u64().unwrap());
+                let jito_instructions = vec![
+                    &vec![
+                        ComputeBudgetInstruction::set_compute_unit_price(gas_price.to_u64().unwrap())
+                    ][..],
+                    &self.instructions[..],
+                    &vec![
+                        solana_sdk::system_instruction::transfer(
+                            &self.trade.root_kp().pubkey(),
+                            &Pubkey::from_str_const(crate::constant::JITO_TIPS[fastrand::usize(..crate::constant::JITO_TIPS.len())]),
+                            jito_fee_sol.to_u64().unwrap(),
+                        ),
+                    ][..]
+                ].concat();
+                let tx = Transaction::new_signed_with_payer(
+                    &jito_instructions,
+                    Some(&self.trade.root_kp().pubkey()),
+                    &[self.trade.root_kp()],
+                    hash,
+                );
+
+                let start_time = ::std::time::Instant::now();
+                let serialized_tx =
+                    base64::engine::general_purpose::STANDARD.encode(bincode::serialize(&tx).unwrap());
+
+                let params = json!({
+                    "tx": serialized_tx,
+                    "skipPreflight": true
+                });
+
+
+                // if let Rpc::General {rpc,..} = rpc1() {
+                //     info!("what is going on");
+                //     rpc.send_transaction_with_config(&tx,RpcSendTransactionConfig{
+                //         skip_preflight: false,
+                //         preflight_commitment: Some(CommitmentLevel::Processed),
+                //         encoding: None,
+                //         max_retries: None,
+                //         min_context_slot: None,
+                //     }).await.unwrap();
+                //     panic!("go go");
+                // }
+
+                let resp = rpc.send_txn(Some(params), true).await.unwrap();
+                let sig = resp["result"]
+                    .as_str()
+                    .ok_or_else(|| anyhow::format_err!("Failed to get signature from response"));
+
+                info!("{} {} Trade sent tx: {:?}",info.name, info.location, start_time.elapsed());
+                sig.map(|s| TradeResponse{
+                    rpc_response:RpcResponse{
+                        signature: s.to_string(),
+                        metric: RpcResponseMetric {
+                            response_time: start_time.elapsed().as_millis(),
+                            response_time_string: format!("{:?}", start_time.elapsed()),
+                        },
+                        rpc_info: info.clone(),
+                        rpc_response_data: RpcResponseData::Jito {
+                            tip_amount_sol: jito_fee_sol,
+                            priority_amount_micro_sol: pfee_micro_sol,
+                        },
+                    },
+                    trade: self.trade.clone(),
+                    instructions: self.instructions,
+                    sig:s.to_string(),
+                })
+                    .map_err(|error|TradeResponseError{
+                        trade:self.trade,error
+                    })
+            }
+            Rpc::General { rpc,info } => {
+                let pfee_sol = (one-self.config.jito_priority_percent) * self.config.tp();
+
+                let tx = Transaction::new_signed_with_payer(
+                    &self.instructions,
+                    Some(&self.trade.root_kp().pubkey()),
+                    &[self.trade.root_kp()],
+                    hash,
+                );
+                let start_time = ::std::time::Instant::now();
+                let resp = rpc
+                    .send_transaction_with_config(
+                        &tx,
+                        solana_client::rpc_config::RpcSendTransactionConfig {
+                            skip_preflight: true,
+                            preflight_commitment: Some(solana_sdk::commitment_config::CommitmentLevel::Processed),
+                            encoding: None,
+                            max_retries: None,
+                            min_context_slot: None,
+                        }
+                        // &rpc_client.get_latest_blockhash().await.unwrap(),
+                    )
+                    .await.map(|x|TradeResponse{
+                    rpc_response:RpcResponse{
+                        signature: x.to_string(),
+                        metric: RpcResponseMetric {
+                            response_time: start_time.elapsed().as_millis(),
+                            response_time_string: format!("{:?}", start_time.elapsed()),
+                        },
+                        rpc_info: info.clone(),
+                        rpc_response_data: RpcResponseData::General {
+                            priority_amount_normal: pfee_sol,
+                        },
+                    },
+                    trade: self.trade.clone(),
+                    instructions: self.instructions,
+                    sig:x.to_string(),
+                })
+                    .map_err(|err| anyhow::Error::msg(err.to_string()))
+                    .map_err(|error|TradeResponseError{
+                        trade:self.trade,error
+                    });
+                info!("{} {} Trade sent tx: {:?}",info.name, info.location, start_time.elapsed());
+                resp
+            }
+        }
     }
 }
 
@@ -229,12 +332,6 @@ impl Trade {
             tvl: price_tvl.tvl,
         }
     }
-    pub async fn get_by_pool(pg: &Sdb, data: String) -> Self {
-        let sql = format!("SELECT * FROM trades WHERE pool_id = {}",data);
-        let a =  pg.query(sql).await.unwrap().take::<Option<Trade>>(0).unwrap();
-        a.unwrap()
-    }
-
     pub fn sol_mint(&self) -> Pubkey {
         if self.coin_mint.as_str() == SOLANA_MINT_STR {
             Pubkey::from_str_const(self.coin_mint.as_str())
@@ -286,8 +383,9 @@ impl Trade {
         let token_program_id = self.token_program();
         let kp = self.root_kp();
         let pubkey = kp.pubkey();
-        let coin_mint = self.coin_mint();
-        let pc_mint = self.pc_mint();
+        // let coin_mint = self.coin_mint();
+        // let pc_mint = self.pc_mint();
+
         let amm = self.amm();
         // let coin_tk = get_associated_token_address_with_program_id(
         //     &pubkey,
@@ -315,13 +413,10 @@ impl Trade {
         ];
 
         if open {
-            parent_root_ix.push(ComputeBudgetInstruction::set_compute_unit_limit(90_000));
+            parent_root_ix.push(ComputeBudgetInstruction::set_compute_unit_limit(cfg.buy_gas_limit.to_u32().unwrap()));
             let mut create_token_accounts = vec![];
             let mut create_token22_accounts = vec![];
             let mut rest_ix = vec![];
-
-            // let jito_tip_amount = sol_to_lamports(cfg.jito.to_f64().unwrap());
-            let priority_fee_amount = cfg.priority_fee;
 
             // 1. https://solscan.io/tx/5ERUd3HpkQwhBNoTi82YVWFTdAz4Y5Xhjst69LFSiARFdxiGJtZELAPJtrdZQqgkjDnXbb2zVBnGCnqCT9Z5G5yn
             // slippage higher than amount
@@ -330,10 +425,11 @@ impl Trade {
             // 1. got exact price
             let decimals = self.decimals;
 
-            let sol_trn_normal = cfg.total_normal();
-            let sol_trn_minus_fees_normal = cfg.total_minus_fees_normal();
-            let amount_normal = (cfg.min_sol / price) * dec!(10).powd(Decimal::from(decimals));
-            let slippage_normal = (cfg.max_sol / price) * dec!(10).powd(Decimal::from(decimals));
+            let max_in = cfg.max_sol / price;
+            let max_in_normal = max_in * dec!(10).powd(Decimal::from(decimals));
+            let min_out_normal = max_in_normal * (dec!(1)-cfg.slippage);
+
+
             // let amount_normal = cfg.min_sol * Decimal::from(LAMPORTS_PER_SOL);
             // let slippage_normal = (cfg.max_sol / price) * dec!(10).powd(Decimal::from(decimals));
             let ca = if token_program_id == spl_token::id() {
@@ -342,10 +438,6 @@ impl Trade {
                 &mut create_token22_accounts
             };
 
-            parent_root_ix.extend_from_slice(&vec![
-                ComputeBudgetInstruction::set_compute_unit_price(priority_fee_amount.to_u64().unwrap()),
-            ]);
-
             // IT WILL TAKE FEES HERE
             // https://solscan.io/tx/27axTimhcskhx8gnphFtu6LssVkV8qbzgaDNm6v1SNagZhPiY3MzDzDrYqPTdfC5gdUhvJVimBpueQ2ygj9wpaS3
             if ca.is_empty() {
@@ -353,27 +445,13 @@ impl Trade {
                     spl_associated_token_account::instruction::create_associated_token_account_idempotent(
                         &pubkey,
                         &pubkey,
-                        &coin_mint,
+                        &self.mint(),
                         &token_program_id,
                     ),
-                    spl_associated_token_account::instruction::create_associated_token_account_idempotent(
-                        &pubkey,
-                        &pubkey,
-                        &pc_mint,
-                        &token_program_id,
-                    )
                 ]);
             }
 
             rest_ix.extend_from_slice(&vec![
-                solana_sdk::system_instruction::transfer(
-                    &pubkey,
-                    &wsol,
-                    (sol_trn_minus_fees_normal * Decimal::from(LAMPORTS_PER_SOL))
-                        .to_u64()
-                        .unwrap(),
-                ),
-                spl_token::instruction::sync_native(&token_program_id, &wsol).unwrap(),
                 raydium_amm::instruction::swap_base_out(
                     &RAYDIUM_V4_PROGRAM,
                     &amm,
@@ -392,20 +470,14 @@ impl Trade {
                     &wsol,
                     &token,
                     &pubkey,
-                    slippage_normal.to_u64().unwrap(),
-                    amount_normal.to_u64().unwrap(),
+                    max_in_normal.to_u64().unwrap(),
+                    min_out_normal.to_u64().unwrap(),
                 )
                     .unwrap(),
-                // build_memo_instruction(),
-                solana_sdk::system_instruction::transfer(
-                    &kp.pubkey(),
-                    &jito_acc,
-                    sol_to_lamports(cfg.jito.to_f64().unwrap()),
-                ),
-                // solana_sdk::system_instruction::transfer(&ix_pubkey, &jito, jito_tip_amount),
             ]);
 
             TradeRequest {
+                config:cfg,
                 trade: Trade {
                     amount: Default::default(),
                     entry_time: None,
@@ -426,10 +498,10 @@ impl Trade {
                     rest_ix,
                 ]
                     .concat(),
+                gas_limit: cfg.buy_gas_limit,
             }
         } else {
-            parent_root_ix.push(ComputeBudgetInstruction::set_compute_unit_limit(60_000));
-
+            parent_root_ix.push(ComputeBudgetInstruction::set_compute_unit_limit(cfg.sell_gas_limit.to_u32().unwrap()));
             parent_root_ix.extend_from_slice(&vec![
                 raydium_amm::instruction::swap_base_in(
                     &RAYDIUM_V4_PROGRAM,
@@ -455,14 +527,6 @@ impl Trade {
                     .unwrap(),
                 spl_token::instruction::close_account(
                     &token_program_id,
-                    &wsol,
-                    &kp.pubkey(),
-                    &kp.pubkey(),
-                    &[&kp.pubkey()],
-                )
-                    .unwrap(),
-                spl_token::instruction::close_account(
-                    &token_program_id,
                     &token,
                     &kp.pubkey(),
                     &kp.pubkey(),
@@ -470,17 +534,14 @@ impl Trade {
                 )
                     .unwrap(),
                 // build_memo_instruction(),
-                solana_sdk::system_instruction::transfer(
-                    &kp.pubkey(),
-                    &jito_acc,
-                    sol_to_lamports(cfg.jito.to_f64().unwrap()),
-                ),
             ]);
             TradeRequest{
+                config:cfg,
                 trade: Trade {
                     ..self
                 },
                 instructions:parent_root_ix,
+                gas_limit: cfg.sell_gas_limit,
             }
         }
     }

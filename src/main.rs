@@ -1,15 +1,15 @@
 use std::sync::Arc;
-use base64::Engine;
 use env_logger::Builder;
 use env_logger::fmt::style;
 use log::{Level, LevelFilter, Metadata, Record};
-use surrealdb::engine::remote::ws::Ws;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::Mutex;
 use wolf_trader::bg_chan::bg_chan;
-use wolf_trader::chan::{trade_chan, Chan};
+use wolf_trader::chan::Chan;
+use wolf_trader::trade_chan::trade_chan;
 use wolf_trader::cmd::InternalCommand;
-use wolf_trader::constant::{DB, ENABLE_WEBSOCKET, SURREAL_DB_URL};
+use wolf_trader::constant::{ENABLE_WEBSOCKET};
+use wolf_trader::jito_chan::jito_chan;
 use wolf_trader::websocket_server::{start_websocket_server, WebsocketState};
 
 struct SimpleLogger {
@@ -50,6 +50,7 @@ impl log::Log for SimpleLogger {
 #[tokio::main]
 async fn main() {
 
+    tokio_rustls::rustls::crypto::aws_lc_rs::default_provider().install_default().expect("Failed to install rustls crypto provider");
 
     // raydium_amm::log::decode_ray_log("Alh4A5VLFQcAWHgDlUsVBwCInOJavHfuY6VQ+YmAAAAAWEKe0EsVBwAANHZmewAAAAAAAAAAAAAAAABuZ0NaFWgAAAAAAAAAAAeCzW9zdO5j/xb1iYAAAAA=");
     raydium_amm::log::decode_ray_log("BHh3Uvk8AAAAYCx1xzAAAAACAAAAAAAAAADh9QUAAAAAI667pxAAAACSCwf8EtAAABT66gMAAAAA");
@@ -74,9 +75,6 @@ async fn main() {
             .unwrap();
     }
 
-    DB.connect::<Ws>(SURREAL_DB_URL).await.unwrap();
-    DB.use_ns("wt").use_db("wt").await.unwrap();
-
 
     let chan = Chan{
         bg: bg_send,
@@ -86,6 +84,13 @@ async fn main() {
 
     tokio::spawn(async move {
         bg_chan(bg_r).await
+    });
+
+    tokio::spawn({
+        let chan = chan.clone();
+        async move {
+            jito_chan(chan).await
+        }
     });
 
 

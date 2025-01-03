@@ -1,9 +1,11 @@
-use crate::chan::{InterestedTx, TradeChanLog};
+use crate::trade_chan::{InterestedTx, TradeChanLog};
+use crate::jito_chan::TipStatistics;
 use crate::trade::{Trade, TradePrice};
 
 
 #[derive(Debug)]
 pub enum InternalCommand {
+    JitoTip(TipStatistics),
     SellTradeSuccess(Trade),
     BuyTradeSuccess(Trade),
     LogTrade(TradeChanLog),

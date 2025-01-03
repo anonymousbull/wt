@@ -3,9 +3,9 @@ use rust_decimal_macros::dec;
 use solana_sdk::account::ReadableAccount;
 use solana_sdk::native_token::LAMPORTS_PER_SOL;
 use solana_sdk::program_pack::Pack;
-use wolf_trader::constant::{solana_rpc_client, SURREAL_DB_URL};
+use wolf_trader::constant::{SURREAL_DB_URL};
 use wolf_trader::position::PositionConfig;
-use wolf_trader::send_tx::send_tx;
+use wolf_trader::rpc::{send_tx, solana_rpc_client};
 use wolf_trader::trade::Trade;
 
 #[tokio::main]
@@ -14,15 +14,12 @@ async fn main() {
         .format_timestamp_millis()
         .init();
     let pg = wolf_trader::constant::pg_conn().await;
-    let db = surrealdb::Surreal::new::<surrealdb::engine::remote::ws::Ws>(SURREAL_DB_URL).await.unwrap();
-    db.use_ns("wt").use_db("wt").await.unwrap();
     let args = std::env::args().collect::<Vec<_>>();
 
     let cfg = PositionConfig {
-        min_sol: dec!(0.008),
         max_sol: dec!(0.01),
         ata_fee: dec!(0.00203928),
-        jito: dec!(0.04),
+        max_jito: dec!(0.04),
         close_trade_fee: dec!(0.00203928),
         priority_fee: dec!(20_00000), // 0.0007 SOL
         base_fee: Default::default(),
@@ -32,7 +29,7 @@ async fn main() {
     let bs = &args[1];
     let coin = &args[2];
 
-    let trade = Trade::get_by_pool(&db, coin.clone()).await;
+    let trade = Trade::default();
 
     let accounts = rpc.get_multiple_accounts(
         vec![
