@@ -6,7 +6,7 @@ pub mod cmd;
 pub mod schema;
 pub mod rpc;
 pub mod trade_chan;
-pub mod ray_log;
+pub mod program_log;
 pub mod websocket_server;
 pub mod bg_chan;
 pub mod jito_chan;

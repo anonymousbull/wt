@@ -1,6 +1,6 @@
 use crate::constant::{RAYDIUM_V4_AUTHORITY, RAYDIUM_V4_PROGRAM, SOLANA_MINT_STR};
 use crate::position::PositionConfig;
-use crate::ray_log::{RayLog, RayLogInfo};
+use crate::program_log::{ProgramLog, ProgramLogInfo};
 use crate::rpc::{rpc1, Rpc, RpcResponse, RpcResponseData, RpcResponseMetric};
 use chrono::{DateTime, Utc};
 use raydium_amm::solana_program::native_token::{sol_to_lamports, LAMPORTS_PER_SOL};
@@ -24,6 +24,7 @@ use serde_json::json;
 use solana_client::rpc_config::RpcSendTransactionConfig;
 use solana_sdk::commitment_config::CommitmentLevel;
 use crate::solana::*;
+use crate::trade_chan::TradeChanLog;
 
 #[derive(Clone, Debug,Serialize,Deserialize,Default)]
 pub struct Trade {
@@ -50,7 +51,7 @@ pub struct Trade {
     pub sol_after: Option<Decimal>,
 
     pub root_kp:Vec<u8>,
-    pub pool_id: String,
+    pub amm: TradePool,
     // pub pump_curve_id: String,
     pub user_wallet: String,
 
@@ -63,6 +64,35 @@ pub struct Trade {
     pub sell_logs: Vec<RpcResponse>,
     pub buy_log: Option<RpcResponse>,
     pub sell_log: Option<RpcResponse>,
+
+    pub price:Decimal,
+}
+
+
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, Default)]
+pub enum TradePool {
+    RayAmm4(Pubkey),
+    PumpBondingCurve(Pubkey),
+    #[default]
+    Empty
+}
+
+impl TradePool {
+    pub fn to_string(&self)->String{
+        match self {
+            TradePool::RayAmm4(v) => v.to_string(),
+            TradePool::PumpBondingCurve(v) => v.to_string(),
+            TradePool::Empty => {unimplemented!()}
+        }
+    }
+    pub fn tp_pk(&self)->Pubkey{
+        match self {
+            TradePool::RayAmm4(v) => v.clone(),
+            TradePool::PumpBondingCurve(v) => v.clone(),
+            TradePool::Empty => {unimplemented!()}
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
@@ -96,7 +126,7 @@ pub type TradeResponseResult = Result<TradeResponse, TradeResponseError>;
 #[repr(i32)]
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, PartialEq, Hash, Default)]
 pub enum TradeState {
-    Init = 1,
+    Pricing = 1,
     PositionRequest = 2,
     PendingBuy = 3,
     BuySuccess = 4,
@@ -277,6 +307,13 @@ impl TradeRequest {
 }
 
 impl Trade {
+    pub fn new_trade_log(&self)->TradeChanLog{
+        TradeChanLog{
+            trade: self.clone(),
+            dt: Utc::now(),
+            ..Default::default()
+        }
+    }
 
     fn price_tvl(sol_amount: u64, token_amount: u64, token_decimals: u8) -> PriceTvl {
         // 1000
@@ -289,9 +326,9 @@ impl Trade {
         let tvl = (price * token_amount_normal) + sol_amount_normal;
         PriceTvl { price, tvl  }
     }
-    pub fn update_from_ray_log(&mut self, ray_log: &RayLog, price_id:i64, next:bool) -> TradePrice {
+    pub fn update_from_ray_log(&mut self, ray_log: &ProgramLog, price_id:i64, next:bool) -> TradePrice {
         let (pc,coin) = match &ray_log.log {
-            RayLogInfo::InitLog(init) => {
+            ProgramLogInfo::RayInitLog(init) => {
                 self.decimals = if init.pc_decimals == 9 {
                     init.coin_decimals
                 } else {
@@ -299,14 +336,14 @@ impl Trade {
                 } as i16;
                 (init.pc_amount, init.coin_amount)
             }
-            RayLogInfo::SwapBaseIn(swap) => {
+            ProgramLogInfo::RaySwapBaseIn(swap) => {
                 if next {
                     (ray_log.next_pc,ray_log.next_coin)
                 } else {
                     (swap.pool_pc, swap.pool_coin)
                 }
             }
-            RayLogInfo::SwapBaseOut(swap) => {
+            ProgramLogInfo::RaySwapBaseOut(swap) => {
                 if next {
                     (ray_log.next_pc,ray_log.next_coin)
                 } else {
@@ -357,7 +394,7 @@ impl Trade {
         Pubkey::from_str(&self.token_program_id.as_str()).unwrap()
     }
     pub fn amm(&self)->Pubkey{
-        Pubkey::from_str(&self.pool_id.as_str()).unwrap()
+        self.amm.tp_pk()
     }
     pub fn coin_mint(&self)->Pubkey{
         Pubkey::from_str(&self.coin_mint.as_str()).unwrap()
@@ -546,7 +583,7 @@ impl Trade {
         }
     }
 
-    pub fn from_solana_account_grpc(accounts: &[Pubkey]) -> Self {
+    pub fn from_raydium_init(accounts: &[Pubkey]) -> Self {
         let token_program_id = accounts[0].to_string();
         let amm = accounts[4].to_string();
         let coin_mint = accounts[8].to_string();
@@ -556,7 +593,29 @@ impl Trade {
         let user_wallet = accounts[17].to_string();
         Self {
             id:Default::default(),
-            pool_id: amm,
+            amm: TradePool::RayAmm4(Pubkey::from_str_const(amm.as_str())),
+            coin_vault,
+            pc_vault,
+            coin_mint,
+            pc_mint,
+            // VERY RISKY
+            decimals: Default::default(),
+            token_program_id,
+            user_wallet,
+            ..Default::default()
+        }
+    }
+
+    pub fn from_pump_swap(accounts: &[Pubkey]) -> Self {
+        let token_program_id = accounts[8].to_string();
+        // let amm = accounts[4].to_string();
+        let coin_mint = accounts[2].to_string();
+        let pc_mint = SOLANA_MINT_STR.to_string();
+        let coin_vault = accounts[4].to_string();
+        let pc_vault = accounts[11].to_string();
+        let user_wallet = accounts[6].to_string();
+        Self {
+            id:Default::default(),
             coin_vault,
             pc_vault,
             coin_mint,

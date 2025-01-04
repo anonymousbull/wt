@@ -5,6 +5,7 @@ use crate::trade::{Trade, TradePrice};
 
 #[derive(Debug)]
 pub enum InternalCommand {
+    PumpSwap(InterestedTx),
     JitoTip(TipStatistics),
     SellTradeSuccess(Trade),
     BuyTradeSuccess(Trade),

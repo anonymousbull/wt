@@ -1,15 +1,17 @@
 use std::sync::Arc;
+use base64::Engine;
 use env_logger::Builder;
 use env_logger::fmt::style;
-use log::{Level, LevelFilter, Metadata, Record};
+use log::{info, Level, LevelFilter, Metadata, Record};
 use tokio::sync::mpsc::Sender;
 use tokio::sync::Mutex;
 use wolf_trader::bg_chan::bg_chan;
 use wolf_trader::chan::Chan;
 use wolf_trader::trade_chan::trade_chan;
 use wolf_trader::cmd::InternalCommand;
-use wolf_trader::constant::{ENABLE_WEBSOCKET};
+use wolf_trader::constant::{ENABLE_WEBSOCKET, PUMP_BUY_CODE};
 use wolf_trader::jito_chan::jito_chan;
+use wolf_trader::program_log::PumpTradeLog;
 use wolf_trader::websocket_server::{start_websocket_server, WebsocketState};
 
 struct SimpleLogger {
@@ -56,9 +58,15 @@ async fn main() {
     raydium_amm::log::decode_ray_log("BHh3Uvk8AAAAYCx1xzAAAAACAAAAAAAAAADh9QUAAAAAI667pxAAAACSCwf8EtAAABT66gMAAAAA");
 
 
-    let pump = "vdt/007mYe7P926dXkchooyFXXnJov3RsBPN74bgvPMGeX2iI98Gz4CWmAAAAAAAS1ceeQsAAAABqYJJd/7/sFhzhEN5QbMYeJ1RuKF1GQJPkhiNsGdGmFwMjXJnAAAAALokx9ESAAAAGibzfDRqAQC6eKPVCwAAABqO4DCjawAA";
-    // let bytes = base64::prelude::BASE64_STANDARD.decode(pump).unwrap();
+    // let pump = "vdt/007mYe7P926dXkchooyFXXnJov3RsBPN74bgvPMGeX2iI98Gz4CWmAAAAAAAS1ceeQsAAAABqYJJd/7/sFhzhEN5QbMYeJ1RuKF1GQJPkhiNsGdGmFwMjXJnAAAAALokx9ESAAAAGibzfDRqAQC6eKPVCwAAABqO4DCjawAA";
 
+//     let pump = "vdt/007mYe5zR/rKvm11proPeGwoDBPsrziiklJqgWw+XokSQsxxbwV/0QAAAAAAZbO0JhUAAAAB2ds811Rj9oovAckMF5TfATd+Vf6AVd1SgpLrrhK7kS4ReHhnAAAAACq1zT0QAAAALMcuybKjAQAqCapBCQAAACwvHH0hpQAA";
+//     let bytes = base64::prelude::BASE64_STANDARD.decode(pump).unwrap();
+//     let log: PumpTradeLog = bincode::deserialize(&bytes[8..]).unwrap();
+//     println!("{:?}",log);
+//     println!("{:?} {:?}",&bytes[..8], PUMP_BUY_CODE.as_slice());
+//
+// panic!("d");
     raydium_amm::log::decode_ray_log("BHh3Uvk8AAAAYCx1xzAAAAACAAAAAAAAAADh9QUAAAAAI667pxAAAACSCwf8EtAAABT66gMAAAAA");
     solana_sdk::pubkey::Pubkey::from_str_const("So11111111111111111111111111111111111111112");
     let (bg_send, bg_r) = tokio::sync::mpsc::channel::<InternalCommand>(100);
@@ -74,6 +82,7 @@ async fn main() {
             .map(|()| log::set_max_level(LevelFilter::Info))
             .unwrap();
     }
+
 
 
     let chan = Chan{
