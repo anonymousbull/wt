@@ -20,6 +20,7 @@ pub const JITO_TIPS:[&str;8] = [
 
 pub const PUMP_SWAP_CODE:[u8;8] = [189, 219, 127, 211, 78, 230, 97, 238];
 pub const PUMP_BUY_CODE:[u8;8] = [102, 6, 61, 18, 1, 218, 235, 234];
+pub const PUMP_SELL_CODE:[u8;8] = [51, 230, 133, 164, 1, 127, 131, 173];
 
 pub static KEYPAIR: OnceLock<Keypair> = OnceLock::new();
 pub const SURREAL_DB_URL: &str = env!("SURREAL_DB_URL");

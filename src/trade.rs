@@ -17,16 +17,16 @@ use solana_sdk::transaction::Transaction;
 use spl_associated_token_account_client::address::get_associated_token_address_with_program_id;
 use std::cmp::{max, min};
 use std::str::FromStr;
-use anyhow::Error;
+use anyhow::{anyhow, Error};
 use base64::Engine;
 use futures::stream::FuturesUnordered;
-use log::info;
+use log::{error, info};
 use serde_json::json;
 use solana_client::rpc_config::RpcSendTransactionConfig;
 use solana_sdk::commitment_config::CommitmentLevel;
 use tokio::task::JoinHandle;
 use crate::pump;
-use crate::pump::{PumpBuy, PumpBuyData};
+use crate::pump::{PumpTrade, PumpTradeData};
 use crate::solana::*;
 
 #[derive(Clone, Debug,Serialize,Deserialize)]
@@ -61,7 +61,11 @@ pub struct Trade {
     pub instructions: Vec<TradeInstruction>,
     pub cfg: PositionConfig,
     pub transactions: Vec<TradeTransaction>,
-    pub error: Option<String>
+    pub error: Option<String>,
+
+    pub plog:ProgramLog,
+
+    pub buy_out: Option<u64>,
 }
 
 #[derive(Clone,Serialize,Deserialize,Debug)]
@@ -200,170 +204,22 @@ impl std::fmt::Display for TradeResponseError {
     }
 }
 
-impl TradeRequest {
-    pub async fn build_tx_and_send(self, rpc:Rpc) -> TradeResponseResult {
-       let lamports_per_sol_dec = lamports_per_sol_dec();
-       let micro_lamports_per_sol_dec = micro_lamports_per_sol_dec();
 
-        let hash = if let Rpc::General {rpc:read_rpc,..} = rpc1() {
-            read_rpc.get_latest_blockhash().await.unwrap()
-        } else {
-            unreachable!()
-        };
-        let one = dec!(1);
-
-        match rpc {
-            Rpc::Jito { rpc,info,.. } => {
-                // The priority fee should equal our fee split
-                // and it should be higher than average
-
-                let jito_fee_sol_normal = (self.config.jito_tip_percent / dec!(2)) * self.config.fee();
-                let jito_fee_sol = jito_fee_sol_normal * lamports_per_sol_dec;
-
-                let pfee_sol_normal = (self.config.jito_priority_percent / dec!(2)) * self.config.fee();
-                let pfee_micro_sol = pfee_sol_normal * micro_lamports_per_sol_dec;
-
-
-                let gas_price = pfee_micro_sol / self.gas_limit;
-                info!("max fees {}",self.config.tp());
-                info!("jito fee {}",jito_fee_sol_normal);
-                info!("pfee fee {}",pfee_sol_normal);
-                info!("pfee_micro_sol {}",pfee_micro_sol);
-                info!("gas limit {}",self.gas_limit);
-                info!("gas price {}",gas_price);
-                info!("jito ix value {}",jito_fee_sol.to_u64().unwrap());
-                let jito_instructions = vec![
-                    &vec![
-                        ComputeBudgetInstruction::set_compute_unit_price(gas_price.to_u64().unwrap())
-                    ][..],
-                    &self.instructions[..],
-                    &vec![
-                        solana_sdk::system_instruction::transfer(
-                            &self.trade.root_kp().pubkey(),
-                            &Pubkey::from_str_const(crate::constant::JITO_TIPS[fastrand::usize(..crate::constant::JITO_TIPS.len())]),
-                            jito_fee_sol.to_u64().unwrap(),
-                        ),
-                    ][..]
-                ].concat();
-                let tx = Transaction::new_signed_with_payer(
-                    &jito_instructions,
-                    Some(&self.trade.root_kp().pubkey()),
-                    &[self.trade.root_kp()],
-                    hash,
-                );
-
-                let start_time = ::std::time::Instant::now();
-                let serialized_tx =
-                    base64::engine::general_purpose::STANDARD.encode(bincode::serialize(&tx).unwrap());
-
-                let params = json!({
-                    "tx": serialized_tx,
-                    "skipPreflight": true
-                });
-
-
-                // if let Rpc::General {rpc,..} = rpc1() {
-                //     info!("what is going on");
-                //     rpc.send_transaction_with_config(&tx,RpcSendTransactionConfig{
-                //         skip_preflight: false,
-                //         preflight_commitment: Some(CommitmentLevel::Processed),
-                //         encoding: None,
-                //         max_retries: None,
-                //         min_context_slot: None,
-                //     }).await.unwrap();
-                //     panic!("go go");
-                // }
-
-                let resp = rpc.send_txn(Some(params), true).await.unwrap();
-                let sig = resp["result"]
-                    .as_str()
-                    .ok_or_else(|| anyhow::format_err!("Failed to get signature from response"));
-
-                info!("{} {} Trade sent tx: {:?}",info.name, info.location, start_time.elapsed());
-                sig.map(|s| TradeResponse{
-                    rpc_response:RpcResponse{
-                        signature: s.to_string(),
-                        metric: RpcResponseMetric {
-                            response_time: start_time.elapsed().as_millis(),
-                            response_time_string: format!("{:?}", start_time.elapsed()),
-                        },
-                        rpc_info: info.clone(),
-                        rpc_response_data: RpcResponseData::Jito {
-                            tip_amount_sol: jito_fee_sol,
-                            priority_amount_micro_sol: pfee_micro_sol,
-                        },
-                    },
-                    trade: self.trade.clone(),
-                    instructions: self.instructions,
-                    sig:s.to_string(),
-                })
-                    .map_err(|error|TradeResponseError{
-                        trade:self.trade,error
-                    })
-            }
-            Rpc::General { rpc,info } => {
-                let pfee_sol = (one-self.config.jito_priority_percent) * self.config.tp();
-
-                let tx = Transaction::new_signed_with_payer(
-                    &self.instructions,
-                    Some(&self.trade.root_kp().pubkey()),
-                    &[self.trade.root_kp()],
-                    hash,
-                );
-                let start_time = ::std::time::Instant::now();
-                let resp = rpc
-                    .send_transaction_with_config(
-                        &tx,
-                        solana_client::rpc_config::RpcSendTransactionConfig {
-                            skip_preflight: true,
-                            preflight_commitment: Some(solana_sdk::commitment_config::CommitmentLevel::Processed),
-                            encoding: None,
-                            max_retries: None,
-                            min_context_slot: None,
-                        }
-                        // &rpc_client.get_latest_blockhash().await.unwrap(),
-                    )
-                    .await.map(|x|TradeResponse{
-                    rpc_response:RpcResponse{
-                        signature: x.to_string(),
-                        metric: RpcResponseMetric {
-                            response_time: start_time.elapsed().as_millis(),
-                            response_time_string: format!("{:?}", start_time.elapsed()),
-                        },
-                        rpc_info: info.clone(),
-                        rpc_response_data: RpcResponseData::General {
-                            pfee_sol_ui: pfee_sol,
-                        },
-                    },
-                    trade: self.trade.clone(),
-                    instructions: self.instructions,
-                    sig:x.to_string(),
-                })
-                    .map_err(|err| anyhow::Error::msg(err.to_string()))
-                    .map_err(|error|TradeResponseError{
-                        trade:self.trade,error
-                    });
-                info!("{} {} Trade sent tx: {:?}",info.name, info.location, start_time.elapsed());
-                resp
-            }
-        }
-    }
-}
 
 pub struct NewTrade {
     pub amm:TradePool,
     pub token_program_id: Pubkey,
     pub user_wallet: Pubkey,
     pub cfg: PositionConfig,
-    pub plog:ProgramLog
+    pub log: String,
 }
 
 impl Trade {
-    pub fn new(
+    pub fn try_new(
         new_trade: NewTrade
-    )->Self{
-        let NewTrade{amm,token_program_id,user_wallet,cfg,plog} = new_trade;
-        let trade = Self {
+    )->anyhow::Result<Self>{
+        let NewTrade{amm,token_program_id,user_wallet,cfg, log} = new_trade;
+        Self {
             id: 0,
             decimals: 0,
             token_program_id:token_program_id.to_string(),
@@ -388,8 +244,9 @@ impl Trade {
             instructions: vec![],
             transactions: vec![],
             error: None,
-        };
-        trade.price_from_log(plog,true)
+            plog: Default::default(),
+            buy_out: None,
+        }.update_price_from_log(log, true)
     }
     pub fn console_log(&self) -> String {
         let mut json = json!({});
@@ -476,6 +333,7 @@ impl Trade {
             _ => false,
         }
     }
+
     pub fn to_trade_price(&self,price_id:i64)->TradePrice{
         TradePrice{
             id: price_id,
@@ -485,8 +343,9 @@ impl Trade {
         }
     }
 
-    pub fn price_from_log(mut self, program_log: ProgramLog, next:bool) -> Self {
-        let (pc,coin) = match &program_log.log {
+    pub fn update_price_from_log(mut self, log:String, next:bool) -> anyhow::Result<Self> {
+        let plog = ProgramLog::from(log.clone())?;
+        let (pc,coin) = match &plog.log {
             ProgramLogInfo::RayInitLog(init) => {
                 self.decimals = if init.pc_decimals == 9 {
                     init.coin_decimals
@@ -497,23 +356,25 @@ impl Trade {
             }
             ProgramLogInfo::RaySwapBaseIn(swap) => {
                 if next {
-                    (program_log.next_pc, program_log.next_coin)
+                    (plog.next_pc, plog.next_coin)
                 } else {
                     (swap.pool_pc, swap.pool_coin)
                 }
             }
             ProgramLogInfo::RaySwapBaseOut(swap) => {
                 if next {
-                    (program_log.next_pc, program_log.next_coin)
+                    (plog.next_pc, plog.next_coin)
                 } else {
                     (swap.pool_pc, swap.pool_coin)
                 }
             }
             ProgramLogInfo::PumpTradeLog(c) => {
                 self.decimals = 6;
-                (program_log.next_pc, program_log.next_coin)
+                (plog.next_pc, plog.next_coin)
             }
-            _ => unreachable!(),
+            _ => {
+                return Err(anyhow!("known program, unknown event\nlog {log}\nplog: {plog:?}"));
+            },
         };
 
         let sol_amount = min(pc, coin);
@@ -531,7 +392,8 @@ impl Trade {
         self.price = price;
         self.tvl = tvl;
         self.k = k;
-        self
+        self.plog = plog;
+        Ok(self)
     }
     pub fn sol_mint(&self) -> Pubkey {
         match self.amm {
@@ -656,24 +518,32 @@ impl Trade {
                     "tx": serialized_tx,
                     "skipPreflight": true
                 });
-                // if let Rpc::General {rpc,..} = rpc1() {
-                //     info!("what is going on");
-                //     rpc.send_transaction_with_config(&tx,RpcSendTransactionConfig{
-                //         skip_preflight: true,
-                //         preflight_commitment: Some(CommitmentLevel::Processed),
-                //         encoding: None,
-                //         max_retries: None,
-                //         min_context_slot: None,
-                //     }).await.unwrap();
-                //     panic!("go go");
-                // }
+                if self.is_buy() == false {
+                    if let Rpc::General {rpc,..} = rpc1() {
+                        info!("what is going on");
+                        rpc.send_transaction_with_config(&tx,RpcSendTransactionConfig{
+                            skip_preflight: true,
+                            preflight_commitment: Some(CommitmentLevel::Processed),
+                            encoding: None,
+                            max_retries: None,
+                            min_context_slot: None,
+                        }).await.unwrap();
+                        panic!("go go");
+                    }
+                }
+
                 let resp = rpc.send_txn(Some(params), true).await.unwrap();
                 let sig = resp["result"]
                     .as_str()
                     .ok_or_else(|| anyhow::format_err!("Failed to get signature from response"));
                 log_info = Some(info.clone());
                 info!("{} {} Trade sent tx: {:?}",info.name, info.location, start_time.elapsed());
-                sig.map(|s| {
+                let t = self.clone();
+                sig.inspect(|x|{
+                    info!("https://solscan.io/tx/{x}");
+                    info!("https://pump.fun/coin/{}",t.mint().to_string());
+
+                }).map(|s| {
                     let general = TradeRpcLogGeneral{
                         signature: s.to_string(),
                         response_time: format!("{:?}", start_time.elapsed()),
@@ -709,7 +579,7 @@ impl Trade {
                     .send_transaction_with_config(
                         &tx,
                         solana_client::rpc_config::RpcSendTransactionConfig {
-                            skip_preflight: true,
+                            skip_preflight: false,
                             preflight_commitment: Some(solana_sdk::commitment_config::CommitmentLevel::Processed),
                             encoding: None,
                             max_retries: None,
@@ -898,27 +768,32 @@ impl Trade {
                 }
             }
             TradePool::PumpBondingCurve(curve) => {
-                if self.is_buy() {
-                    let pump_ix = pump::buy(
-                        PumpBuy{
-                            data: PumpBuyData {
-                                min: min_out_token.to_u64().unwrap(),
-                                max: max_in_sol.to_u64().unwrap(),
-                            },
-                            mint: self.mint(),
-                            curve:curve.amm,
-                            ata_curve: curve.vault,
-                            ata_user: token,
-                            user: self.root_kp().pubkey(),
-                        }
-                    ).unwrap();
-                    instructions.push(pump_ix);
+                let min = if self.is_buy() {
+                    min_out_token.to_u64().unwrap()
                 } else {
-                    unreachable!()
-                }
-
+                    Default::default()
+                };
+                let max = if self.is_buy() {
+                    max_in_sol.to_u64().unwrap()
+                } else {
+                    self.buy_out.unwrap()
+                };
+                let pump_ix = pump::trade(
+                    PumpTrade {
+                        data: PumpTradeData {
+                            min,
+                            max,
+                        },
+                        mint: self.mint(),
+                        curve:curve.amm,
+                        ata_curve: curve.vault,
+                        ata_user: token,
+                        user: self.root_kp().pubkey(),
+                    },
+                    self.is_buy()
+                ).unwrap();
+                instructions.push(pump_ix);
             }
-
         }
 
 
@@ -963,7 +838,7 @@ impl Trade {
         self
     }
 
-    pub fn from_raydium_init(accounts: &[Pubkey], cfg: PositionConfig, plog: ProgramLog) -> Self {
+    pub fn from_raydium_init(accounts: &[Pubkey], cfg: PositionConfig, log: String) -> anyhow::Result<Self> {
         let token_program_id = accounts[0].to_string();
         let amm = accounts[4].to_string();
         let coin_mint = accounts[8].to_string();
@@ -971,9 +846,9 @@ impl Trade {
         let coin_vault = accounts[10].to_string();
         let pc_vault = accounts[11].to_string();
         let user_wallet = accounts[17].to_string();
-        Self::new(
+        Self::try_new(
             NewTrade{
-                plog,
+                log,
                 cfg,
                 amm:TradePool::RayAmm4(RayAmm4{
                     amm:Pubkey::from_str_const(amm.as_str()),
@@ -988,7 +863,7 @@ impl Trade {
         )
     }
 
-    pub fn from_pump_swap(accounts: &[Pubkey], cfg: PositionConfig, plog: ProgramLog) -> Self {
+    pub fn from_pump_swap(accounts: &[Pubkey], cfg: PositionConfig, log: String) -> anyhow::Result<Self> {
         let token_program_id = accounts[8].to_string();
         let amm = accounts[3].to_string();
         let mint = accounts[2].to_string();
@@ -996,8 +871,9 @@ impl Trade {
         let vault = accounts[4].to_string();
         let pc_vault = accounts[11].to_string();
         let user_wallet = accounts[6].to_string();
-        Self::new(
+        Self::try_new(
             NewTrade{
+                log,
                 amm:TradePool::PumpBondingCurve(PumpBondingCurve{
                     amm:Pubkey::from_str_const(amm.as_str()),
                     vault:Pubkey::from_str_const(vault.as_str()),
@@ -1006,7 +882,6 @@ impl Trade {
                 token_program_id:Pubkey::from_str_const(token_program_id.as_str()),
                 user_wallet:Pubkey::from_str_const(user_wallet.as_str()),
                 cfg,
-                plog
             }
         )
     }

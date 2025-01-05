@@ -6,16 +6,16 @@ use crate::trade::{Trade, TradePrice, TradeResponseResult};
 #[derive(Debug)]
 pub enum InternalCommand {
     RpcTradeResponse(Result<Trade,Trade>),
-    PumpSwap(InterestedTx),
+    PumpSwapMaybe(InterestedTx),
     JitoTip(TipStatistics),
     SellTradeSuccess(Trade),
     BuyTradeSuccess(Trade),
     LogTrade(Trade),
-    TradeState {
+    TradeUpdate {
         trade: Trade,
         interested_tx: InterestedTx
     },
-    PumpMigration(InterestedTx),
+    RaydiumInit(InterestedTx),
     IsPumpTrade,
     DoNothing,
     PumpPrice,

@@ -31,6 +31,7 @@ use yellowstone_grpc_proto::prelude::{
     Message, SubscribeUpdate, SubscribeUpdateTransaction, Transaction, TransactionStatusMeta,
 };
 use yellowstone_grpc_proto::tonic::Status;
+use crate::db::{get_ignore_mints, update_ignore_mints};
 
 #[derive(Debug)]
 pub struct InterestedTx {
@@ -227,22 +228,40 @@ fn decode_tx(
                 break;
             }
         }
-        if let Some(pump_log) = pump_log_maybe {
+        if let Some(trade) = watch_trades {
+            let mut trade = trade.clone();
+            let mut log = String::new();
+
+            if let Some(l) = ray_log_maybe {
+                log = l.clone();
+            } else if let Some(l) = pump_log_maybe {
+                log = l.clone();
+            }
+
+            let trade = trade.update_price_from_log(log, true);
+            match trade {
+                Ok(trade) => {
+                    Some(InternalCommand::TradeUpdate {
+                        trade,
+                        interested_tx,
+                    })
+                }
+                Err(e) => {
+                    error!("{e}");
+                    None
+                }
+            }
+        } else if let Some(pump_log) = pump_log_maybe {
             interested_tx.logs = pump_log.clone();
-            Some(InternalCommand::PumpSwap(interested_tx))
+            Some(InternalCommand::PumpSwapMaybe(interested_tx))
         } else if let Some(ray_log) = ray_log_maybe {
             interested_tx.logs = ray_log.clone();
-            if let Some(trade) = watch_trades {
-                Some(InternalCommand::TradeState {
-                    trade: trade.clone(),
-                    interested_tx,
-                })
-            } else if meta
+            if meta
                 .log_messages
                 .iter()
                 .any(|z| z.contains("init_pc_amount"))
             {
-                Some(InternalCommand::PumpMigration(interested_tx))
+                Some(InternalCommand::RaydiumInit(interested_tx))
             } else {
                 None
             }
@@ -314,7 +333,7 @@ pub async fn trade_chan(chan: Chan, mut rec: Receiver<InternalCommand>) {
         .read(true)
         .write(true)
         .create(true)
-        .open("trades.json")
+        .open("trades.txt")
         .await
         .unwrap();
     let mut contents = String::new();
@@ -334,7 +353,7 @@ pub async fn trade_chan(chan: Chan, mut rec: Receiver<InternalCommand>) {
     info!("active trades {}", cache.len());
 
     let cfg = PositionConfig {
-        max_sol: dec!(0.1),
+        max_sol: dec!(0.008),
         ata_fee: dec!(0.00203928),
         max_jito: dec!(0.001),
         close_trade_fee: dec!(0.00203928),
@@ -349,10 +368,11 @@ pub async fn trade_chan(chan: Chan, mut rec: Receiver<InternalCommand>) {
         pump_buy_gas_limit: 100_000,
         pump_sell_gas_limit: 100_000,
         tp: dec!(0.05),
-        fee_pct: dec!(0.8),
+        fee_pct: dec!(0.3),
     };
     let geyser = geyser();
 
+    let ignore_mints = get_ignore_mints().await;
     let mut c = geyser.connect().await.unwrap();
     info!("connected to geyser");
 
@@ -433,16 +453,14 @@ pub async fn trade_chan(chan: Chan, mut rec: Receiver<InternalCommand>) {
 
         let maybe_cmd = decode_tx(message, &cache, &mints);
         match maybe_cmd {
-            Some(InternalCommand::TradeState { mut trade, interested_tx: InterestedTx { accounts: _, logs, signature, .. }, }) => {
+            Some(InternalCommand::TradeUpdate { mut trade, interested_tx: InterestedTx { signature, .. }, }) => {
 
-                let ray_log = ProgramLog::from_ray(logs.clone());
-                if let ProgramLogInfo::RayWithdraw(q) = &ray_log.log {
+                if let ProgramLogInfo::RayWithdraw(q) = &trade.plog.log {
                     warn!("{q:?}");
                     continue;
                 }
 
-                let amount_out = ray_log.amount_out;
-                trade = trade.price_from_log(ray_log, true);
+                let amount_out = trade.plog.amount_out;
                 price_id += 1;
                 let trade_price = trade.to_trade_price(price_id);
 
@@ -457,6 +475,8 @@ pub async fn trade_chan(chan: Chan, mut rec: Receiver<InternalCommand>) {
                 match trade.state {
                     TradeState::PendingBuy => {
                         if rpc_signatures.contains(&signature) {
+
+                            trade.buy_out = Some(trade.plog.amount_out);
                             // trade.signatures.push(TradeSignature::BuySuccess(signature.to_string()));
                             trade.buy_time = Some(Utc::now());
                             trade.buy_price = Some(trade_price.price);
@@ -533,7 +553,7 @@ pub async fn trade_chan(chan: Chan, mut rec: Receiver<InternalCommand>) {
                     _ => {}
                 }
             }
-            Some(InternalCommand::PumpMigration(event)) => {
+            Some(InternalCommand::RaydiumInit(event)) => {
                 if rpc_state == RpcState::Busy {
                     continue;
                 }
@@ -542,10 +562,12 @@ pub async fn trade_chan(chan: Chan, mut rec: Receiver<InternalCommand>) {
                     info!("can't trade new, previous already in progress");
                     continue;
                 }
+
                 let accounts_maybe = event.try_ray_init2();
                 if accounts_maybe.is_none() {
                     continue;
                 }
+
                 let valid_accounts = accounts_maybe
                     .unwrap()
                     .into_iter()
@@ -559,17 +581,18 @@ pub async fn trade_chan(chan: Chan, mut rec: Receiver<InternalCommand>) {
                     ..
                 } = event;
 
-                let plog = ProgramLog::from_ray(logs.clone());
                 let mut trade = Trade::from_raydium_init(
                     valid_accounts.as_slice(),
                     cfg,
-                    plog
-                );
+                    logs
+                ).unwrap();
+
                 trade_id += 1;
                 trade.id = trade_id;
                 trade.root_kp = kp.to_bytes().to_vec();
-                let trade_price = trade.to_trade_price(price_id);
 
+
+                let trade_price = trade.to_trade_price(price_id);
                 let price = trade_price.price;
 
                 // DEAL WITH THIS LATER
@@ -591,7 +614,7 @@ pub async fn trade_chan(chan: Chan, mut rec: Receiver<InternalCommand>) {
                     }
                 });
             }
-            Some(InternalCommand::PumpSwap(event)) => {
+            Some(InternalCommand::PumpSwapMaybe(event)) => {
 
                 if rpc_state == RpcState::Busy {
                     continue;
@@ -611,23 +634,22 @@ pub async fn trade_chan(chan: Chan, mut rec: Receiver<InternalCommand>) {
                     ..
                 } = event;
 
-                let program_log = ProgramLog::from_pump(logs.clone());
-                let plog = if program_log.is_some() {
-                    program_log.unwrap()
-                } else {
-                    continue
-                };
 
                 let mut trade = Trade::from_pump_swap(
                     valid_accounts.as_slice(),
                     cfg,
-                    plog
+                    logs
                 );
+                if let Err(e) = trade {
+                    error!("{e}");
+                    continue;
+                }
+                let mut trade = trade.unwrap();
 
-                let ignore_mints = std::env::var("IGNORE_MINTS").unwrap().split(",")
-                    .map(Pubkey::from_str_const)
-                    .collect::<Vec<_>>();
-                if ignore_mints.contains()
+
+                if ignore_mints.contains(&trade.mint()) {
+                    continue;
+                }
 
                 // info!("program log {:?} {}", program_log, signature.to_string());
                 trade.root_kp = kp.to_bytes().to_vec();
@@ -635,9 +657,16 @@ pub async fn trade_chan(chan: Chan, mut rec: Receiver<InternalCommand>) {
                 info!("price {}",trade.price);
                 // info!("pump price = {}",trade.price);
                 if trade.price.to_f64().unwrap() >= PUMP_MIGRATION_PRICE * 0.50 {
+
                     info!("time to buy bro {} {}",trade.price,signature.to_string());
                     let mut trade = trade.build_instructions();
                     rpc_state = RpcState::Busy;
+                    tokio::spawn({
+                        let mint = trade.mint();
+                        async move {
+                            update_ignore_mints(mint.to_string()).await;
+                        }
+                    });
                     tokio::spawn({
                         let chan = chan.clone();
                         async move {

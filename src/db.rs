@@ -1,3 +1,8 @@
+use log::info;
+use solana_sdk::pubkey::Pubkey;
+use tokio::fs::OpenOptions;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
 pub mod diesel_export {
     pub use diesel_async::pooled_connection::deadpool::Pool;
     pub use diesel_async::pooled_connection::AsyncDieselConnectionManager;
@@ -5,6 +10,34 @@ pub mod diesel_export {
     pub use diesel_async::{AsyncConnection, AsyncPgConnection, RunQueryDsl};
     pub use diesel::dsl::count_star;
     pub use diesel::prelude::*;
+}
+
+pub async fn get_ignore_mints() -> Vec<Pubkey> {
+    let trades_file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open("trades.txt")
+        .await
+        .unwrap();
+    let mut reader = BufReader::new(trades_file); // Create a buffered reader
+    let mut lines    = reader.lines(); // Initialize a vector to hold the lines
+    let mut ignore_mints = vec![];
+    while let Ok(Some(line)) = lines.next_line().await {
+        ignore_mints.push(Pubkey::from_str_const(line.as_str()));
+    }
+    ignore_mints
+}
+
+pub async fn update_ignore_mints(mint:String) {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .append(true)
+        .open("trades.txt")
+        .await
+        .unwrap();
+    info!("updaing mints {mint}");
+    file.write(format!("\n{mint}").as_bytes()).await.unwrap();
 }
 
 //
