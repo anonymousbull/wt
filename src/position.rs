@@ -3,7 +3,7 @@ use rust_decimal_macros::dec;
 use serde::{Deserialize, Serialize};
 
 
-#[derive(Clone,Debug,Copy,Serialize,Deserialize)]
+#[derive(Clone,Debug,Copy,Serialize,Deserialize,Default)]
 pub struct PositionConfig {
     pub max_sol:Decimal,
     pub ata_fee:Decimal,
@@ -19,8 +19,10 @@ pub struct PositionConfig {
     pub cu_limit: Decimal,
     /// percentage of max_sol to fall to slippage
     pub slippage: Decimal,
-    pub buy_gas_limit: Decimal,
-    pub sell_gas_limit: Decimal,
+    pub ray_buy_gas_limit: u64,
+    pub ray_sell_gas_limit: u64,
+    pub pump_buy_gas_limit: u64,
+    pub pump_sell_gas_limit: u64,
     pub tp: Decimal,
     pub fee_pct: Decimal,
 }

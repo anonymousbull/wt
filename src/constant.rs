@@ -18,7 +18,8 @@ pub const JITO_TIPS:[&str;8] = [
     "3AVi9Tg9Uo68tJfuvoKvqKNWKkC5wPdSSdeBnizKZ6jT",
 ];
 
-pub const PUMP_BUY_CODE:[u8;8] = [189, 219, 127, 211, 78, 230, 97, 238];
+pub const PUMP_SWAP_CODE:[u8;8] = [189, 219, 127, 211, 78, 230, 97, 238];
+pub const PUMP_BUY_CODE:[u8;8] = [102, 6, 61, 18, 1, 218, 235, 234];
 
 pub static KEYPAIR: OnceLock<Keypair> = OnceLock::new();
 pub const SURREAL_DB_URL: &str = env!("SURREAL_DB_URL");
@@ -27,12 +28,19 @@ pub const BLOX_HEADER: &str = env!("BLOX_HEADER");
 pub const NEXT_BLOCK: &str = env!("NEXT_BLOCK");
 pub const SOLANA_MINT_STR: &str = "So11111111111111111111111111111111111111112";
 pub const SOLANA_MINT: Pubkey = Pubkey::from_str_const("So11111111111111111111111111111111111111112");
+
 pub const PUMP_MIGRATION:Pubkey = Pubkey::from_str_const("39azUYFWPz3VHgKCf3VChUwbpURdCHRxjWVowf5jUJjg");
 pub const PUMP_PROGRAM:Pubkey = Pubkey::from_str_const("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P");
 pub const PUMP_GLOBAL:Pubkey = Pubkey::from_str_const("4wTV1YmiEkRvAtNtsSGPtUrqRYQMe5SKy2uB4Jjaxnjf");
 pub const PUMP_EVENT_AUTHORITY:Pubkey = Pubkey::from_str_const("Ce6TQqeHC9p8KetsN6JsjHK7UTZk7nasjjnr7XxXp9F1");
 pub const PUMP_FEE:Pubkey = Pubkey::from_str_const("CebN5WGQ4jvEPvsVU4EoHEpgzq1VV7AbicfhtW4xC9iM");
+
+
 pub const SOLANA_PK: &str = env!("SOLANA_PK");
+
+
+    pub const PUMP_MIGRATION_PRICE:f64 = 0.0000004108264862252296;
+
 
 pub const RPC1: &str = env!("RPC1");
 pub const RPC1_NAME: &str = env!("RPC1_NAME");

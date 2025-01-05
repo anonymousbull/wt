@@ -51,7 +51,7 @@ async fn main() {
 
 
     let req = if bs.as_str() == "buy" {
-        let req = trade.create_position(
+        let req = trade.build_instructions(
             price,
             cfg,
             true
@@ -63,7 +63,7 @@ async fn main() {
     } else {
         let st = tokio::fs::read("trade.json").await.unwrap();
         let trade = serde_json::from_slice::<Trade>(st.as_slice()).unwrap();
-        let req = trade.create_position(
+        let req = trade.build_instructions(
             price,
             cfg,
            false

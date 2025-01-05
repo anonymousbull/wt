@@ -9,7 +9,7 @@ use wolf_trader::bg_chan::bg_chan;
 use wolf_trader::chan::Chan;
 use wolf_trader::trade_chan::trade_chan;
 use wolf_trader::cmd::InternalCommand;
-use wolf_trader::constant::{ENABLE_WEBSOCKET, PUMP_BUY_CODE};
+use wolf_trader::constant::{ENABLE_WEBSOCKET, PUMP_SWAP_CODE};
 use wolf_trader::jito_chan::jito_chan;
 use wolf_trader::program_log::PumpTradeLog;
 use wolf_trader::websocket_server::{start_websocket_server, WebsocketState};

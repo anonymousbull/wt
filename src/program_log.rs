@@ -7,7 +7,7 @@ use rust_decimal::Decimal;
 use solana_sdk::pubkey::Pubkey;
 use raydium_amm::log::{InitLog, LogType, SwapBaseInLog, SwapBaseOutLog, WithdrawLog};
 use raydium_amm::math::SwapDirection;
-use crate::constant::PUMP_BUY_CODE;
+use crate::constant::PUMP_SWAP_CODE;
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct ProgramLog {
@@ -136,10 +136,9 @@ impl ProgramLog {
     }
     pub fn from_pump(log: String) -> Option<Self> {
         let log = log.replace("Program data: ", "");
-        info!("log {log}");
         let bytes = BASE64_STANDARD.decode(log).unwrap();
         let code = &bytes[..8];
-        if code == PUMP_BUY_CODE.as_slice() {
+        if code == PUMP_SWAP_CODE.as_slice() {
             let log = bincode::deserialize::<PumpTradeLog>(&bytes[8..]).unwrap();
             Some(ProgramLog {
                 next_pc:log.virtual_sol_reserves,

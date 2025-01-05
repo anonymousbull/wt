@@ -27,16 +27,16 @@ pub async fn bg_chan(mut rec: Receiver<InternalCommand>) {
 
     while let Some(message) = rec.recv().await {
         match message {
-            InternalCommand::LogTrade(mut log) => {
+            InternalCommand::LogTrade(mut trade) => {
                 info!("sending to log server");
-                log.dt = Utc::now();
+                // trade.dt = Utc::now();
                 client.post("https://in.logs.betterstack.com")
                     .header("Authorization", "Bearer dCmCyuBZBcCNPfujgErWZtSf")
                     .header("Content-Type", "application/x-ndjson")
-                    .json(&log)
+                    .json(&trade)
                     .send()
                     .await.unwrap();
-                trades.insert(log.trade.id,log.trade.clone());
+                trades.insert(trade.id, trade.clone());
                 let d = trades.values().collect::<Vec<_>>();
                 trades_file.write_all(serde_json::to_string(&d).unwrap().as_ref()).await.unwrap();
             }

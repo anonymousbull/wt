@@ -1,15 +1,16 @@
-use crate::trade_chan::{InterestedTx, TradeChanLog};
+use crate::trade_chan::{InterestedTx};
 use crate::jito_chan::TipStatistics;
-use crate::trade::{Trade, TradePrice};
+use crate::trade::{Trade, TradePrice, TradeResponseResult};
 
 
 #[derive(Debug)]
 pub enum InternalCommand {
+    RpcTradeResponse(Result<Trade,Trade>),
     PumpSwap(InterestedTx),
     JitoTip(TipStatistics),
     SellTradeSuccess(Trade),
     BuyTradeSuccess(Trade),
-    LogTrade(TradeChanLog),
+    LogTrade(Trade),
     TradeState {
         trade: Trade,
         interested_tx: InterestedTx
@@ -20,18 +21,12 @@ pub enum InternalCommand {
     PumpPrice,
     ExternalTrade(Trade),
     Log(String),
-    SellTradeFail{
-        trade: Trade,
-        error: anyhow::Error,
-    },
+
     UpdateTrade(Trade),
     InsertTrade(Trade),
     UpdatePrice(TradePrice),
     InsertPrice(TradePrice),
-    BuyTradeFail{
-        trade: Trade,
-        error: anyhow::Error,
-    },
+
     WatchPool(String),
     PriceTvl(TradePrice),
     OnTrading,

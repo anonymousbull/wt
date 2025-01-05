@@ -1,10 +1,14 @@
+use std::str::FromStr;
 use rust_decimal::Decimal;
 use crate::constant::*;
 use crate::jito_chan::TipStatistics;
 use serde::{Deserialize, Serialize};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::commitment_config::CommitmentConfig;
-
+use solana_sdk::instruction::Instruction;
+use solana_sdk::signature::Signature;
+use solana_sdk::transaction::Transaction;
+use crate::trade::TradeTransaction;
 
 #[derive(Clone,Debug,Serialize,Deserialize)]
 pub struct RpcInfo {
@@ -20,6 +24,80 @@ pub struct RpcResponse {
     pub rpc_response_data: RpcResponseData
 }
 
+#[derive(Clone,Debug,Serialize,Deserialize,PartialEq, Eq)]
+pub enum TradeRpcLog {
+    BuyJito(TradeRpcLogJito,TradeRpcLogStatus),
+    SellJito(TradeRpcLogJito,TradeRpcLogStatus),
+    BuyGeneral(TradeRpcLogGeneral,TradeRpcLogStatus),
+    SellGeneral(TradeRpcLogGeneral,TradeRpcLogStatus),
+}
+
+#[derive(Clone,Debug,Serialize,Deserialize,PartialEq,Eq)]
+pub enum TradeRpcLogStatus {
+    Pending,
+    Success,
+    Fail,
+}
+
+impl TradeRpcLog {
+    pub fn change_state(&mut self, signature: Signature, status:TradeRpcLogStatus){
+        match self {
+            TradeRpcLog::BuyJito(x, _) => {
+                if x.general.signature == signature.to_string() {
+                    *self = TradeRpcLog::BuyJito(x.clone(), status);
+                }
+            }
+            TradeRpcLog::SellJito(x, _) => {
+                if x.general.signature == signature.to_string() {
+                    *self = TradeRpcLog::SellJito(x.clone(), status);
+                }
+            }
+            TradeRpcLog::BuyGeneral(x, _) => {
+                if x.signature == signature.to_string() {
+                    *self = TradeRpcLog::BuyGeneral(x.clone(), status);
+                }
+            }
+            TradeRpcLog::SellGeneral(x, _) => {
+                if x.signature == signature.to_string() {
+                    *self = TradeRpcLog::SellGeneral(x.clone(), status);
+                }
+            }
+        }
+    }
+    pub fn signature(&self)->Signature{
+        let s = match self {
+            TradeRpcLog::BuyJito(v,_) => v.general.signature.to_string(),
+            TradeRpcLog::SellJito(v,_) => v.general.signature.to_string(),
+            TradeRpcLog::BuyGeneral(v,_) => v.signature.to_string(),
+            TradeRpcLog::SellGeneral(v,_) => v.signature.to_string()
+        };
+        Signature::from_str(s.as_str()).unwrap()
+    }
+
+}
+
+#[derive(Clone,Debug,Serialize,Deserialize,PartialEq,Eq)]
+pub struct TradeRpcLogJito {
+    pub general:TradeRpcLogGeneral,
+    pub tip_sol_ui: String
+}
+
+#[derive(Clone,Debug,Serialize,Deserialize,PartialEq,Eq)]
+pub struct TradeRpcLogGeneral {
+    pub signature:String,
+    pub response_time:String,
+    pub name:String,
+    pub tx: Transaction,
+    pub ix: Vec<Instruction>,
+}
+
+#[derive(Clone,Debug,Serialize,Deserialize,Default,PartialEq,Eq)]
+pub enum RpcState {
+    #[default]
+    Free,
+    Busy
+}
+
 #[derive(Clone,Debug,Serialize,Deserialize,Copy)]
 pub enum RpcResponseData {
     Jito {
@@ -27,7 +105,7 @@ pub enum RpcResponseData {
         priority_amount_micro_sol:Decimal,
     },
     General {
-        priority_amount_normal:Decimal,
+        pfee_sol_ui:Decimal,
     }
 }
 
@@ -38,6 +116,13 @@ pub struct RpcResponseMetric {
     pub response_time:u128,
     pub response_time_string:String,
 }
+
+pub enum RpcType {
+    Jito,
+    General
+}
+
+
 
 pub enum Rpc {
     Jito {
