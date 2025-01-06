@@ -229,6 +229,7 @@ fn decode_tx(
             }
         }
         if let Some(trade) = watch_trades {
+            info!("trade mint = {}",trade.mint());
             let mut trade = trade.clone();
             let mut log = String::new();
 
@@ -511,16 +512,22 @@ pub async fn trade_chan(chan: Chan, mut rec: Receiver<InternalCommand>) {
                         }
                     }
                     TradeState::BuySuccess => {
+
                         info!("checking profit");
-                        let entry_price = trade.buy_price.unwrap();
-                        trade.pct = (trade.price - entry_price) / entry_price * dec!(100);
+                        let buy_price = trade.buy_price.unwrap();
+                        trade.pct = (trade.price - buy_price) / buy_price * dec!(100);
                         cache.insert(trade.id, trade.clone());
 
                         chan.bg
                             .try_send(InternalCommand::LogTrade(trade.clone()))
                             .unwrap();
 
+
                         if trade.pct > dec!(5) || trade.pct < dec!(-1) {
+                            info!("buy_price = {buy_price}, price={}, pct={}",trade.price,trade.pct);
+                            info!("{}",trade.console_log());
+                            info!("{:?}",&cache.get(&trade.id).unwrap());
+
                             trade = trade.build_instructions();
 
                             warn!("spamming close");
@@ -677,8 +684,6 @@ pub async fn trade_chan(chan: Chan, mut rec: Receiver<InternalCommand>) {
                         }
                     });
 
-                } else {
-                    mints.insert(trade.mint(),trade.clone());
                 }
             }
             _ => {}
