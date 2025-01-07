@@ -1,6 +1,6 @@
 pub mod constant;
 pub mod db;
-pub mod trade;
+pub mod trade22;
 pub mod position;
 pub mod cmd;
 pub mod schema;
@@ -14,3 +14,4 @@ pub mod net;
 pub mod chan;
 pub mod solana;
 pub mod pump;
+pub mod trade;

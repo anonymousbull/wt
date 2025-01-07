@@ -6,6 +6,7 @@ use tokio::sync::mpsc::Receiver;
 use tokio::sync::Mutex;
 use crate::chan::Chan;
 use crate::cmd::InternalCommand;
+use crate::trade22::TradeState;
 
 pub struct WebsocketState {
     pub chan: Chan,
@@ -14,6 +15,7 @@ pub struct WebsocketState {
 
 pub async fn start_websocket_server(state:Arc<WebsocketState>) {
     let listener = TcpListener::bind("127.0.0.1:8080").await.unwrap();
+    info!("listening 8080");
     while let Ok((stream,_)) = listener.accept().await {
         let state = state.clone();
         tokio::spawn(async move {
@@ -56,14 +58,12 @@ async fn handle_client(
     fut: fastwebsockets::upgrade::UpgradeFut,
     state: Arc<WebsocketState>,
 ) -> Result<(), fastwebsockets::WebSocketError> {
+    info!("hello");
     // let mut ws = fastwebsockets::FragmentCollector::new(fut.await?);
     let mut ws = fut.await?;
     ws.set_auto_close(true);
     let (rx, mut tx) = ws.split(tokio::io::split);
     let mut rx = fastwebsockets::FragmentCollectorRead::new(rx);
-
-
-
 
     let mut r = state.rec.lock().await;
 
@@ -74,8 +74,9 @@ async fn handle_client(
         tokio::select! {
             Some(cmd) = r.recv() => {
                 match cmd {
-                    InternalCommand::UpdateTrade(_)=> {
-                        let w = fastwebsockets::Payload::from("abc123000".as_bytes());
+                    InternalCommand::UpdateTrade(trade)=> {
+                        let trade = trade.to_string();
+                        let w = fastwebsockets::Payload::from(trade.as_bytes());
                         tx.write_frame(Frame::text(w)).await.unwrap();
                     }
                     InternalCommand::Log(log) => {
@@ -89,6 +90,7 @@ async fn handle_client(
                 match frame.opcode {
                     fastwebsockets::OpCode::Close => {},
                     fastwebsockets::OpCode::Text  => {
+
                         let a = Vec::from(frame.payload);
                         let b = String::from_utf8(a).unwrap();
                         info!("{b}");

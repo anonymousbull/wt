@@ -1,6 +1,6 @@
 use crate::trade_chan::{InterestedTx};
 use crate::jito_chan::TipStatistics;
-use crate::trade::{Trade, TradePrice, TradeResponseResult};
+use crate::trade22::{Trade, TradePrice, TradeResponseResult};
 
 
 #[derive(Debug)]

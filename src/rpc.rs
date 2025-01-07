@@ -8,7 +8,7 @@ use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::instruction::Instruction;
 use solana_sdk::signature::Signature;
 use solana_sdk::transaction::Transaction;
-use crate::trade::TradeTransaction;
+use crate::trade22::TradeTransaction;
 
 #[derive(Clone,Debug,Serialize,Deserialize)]
 pub struct RpcInfo {
@@ -72,6 +72,16 @@ impl TradeRpcLog {
             TradeRpcLog::SellGeneral(v,_) => v.signature.to_string()
         };
         Signature::from_str(s.as_str()).unwrap()
+    }
+    pub fn success_signature(&self)->Option<Signature>{
+        let s = match self {
+            TradeRpcLog::BuyJito(v,TradeRpcLogStatus::Success) => Some(v.general.signature.to_string()),
+            TradeRpcLog::SellJito(v,TradeRpcLogStatus::Success) => Some(v.general.signature.to_string()),
+            TradeRpcLog::BuyGeneral(v,TradeRpcLogStatus::Success) => Some(v.signature.to_string()),
+            TradeRpcLog::SellGeneral(v,TradeRpcLogStatus::Success) => Some(v.signature.to_string()),
+            _ => None
+        }.map(|x|Signature::from_str(x.as_str()).unwrap());
+        s
     }
 
 }

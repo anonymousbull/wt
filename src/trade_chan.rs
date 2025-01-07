@@ -5,7 +5,7 @@ use crate::position::PositionConfig;
 use crate::program_log::{ProgramLog, ProgramLogInfo};
 use crate::rpc::{geyser, rpcs, solana_rpc_client, RpcResponseData, RpcState, RpcsConfig, TradeRpcLogStatus};
 use crate::solana::*;
-use crate::trade::{Trade, TradePrice, TradeResponse, TradeResponseError, TradeSignature, TradeState};
+use crate::trade22::{Trade, TradePrice, TradeResponse, TradeResponseError, TradeSignature, TradeState};
 use anyhow::anyhow;
 use chrono::{DateTime, Utc};
 use futures::stream::FuturesUnordered;
@@ -20,6 +20,7 @@ use solana_sdk::signature::Signature;
 use std::cmp::PartialEq;
 use std::collections::HashMap;
 use std::str::FromStr;
+use std::time::Duration;
 use rust_decimal::prelude::ToPrimitive;
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncReadExt;
@@ -377,6 +378,7 @@ pub async fn trade_chan(chan: Chan, mut rec: Receiver<InternalCommand>) {
     let mut c = geyser.connect().await.unwrap();
     info!("connected to geyser");
 
+    tokio::time::sleep(Duration::from_secs(5)).await;
     let r = SubscribeRequest {
         commitment: Some(i32::from(CommitmentLevel::Processed)),
         transactions: vec![(
@@ -491,6 +493,8 @@ pub async fn trade_chan(chan: Chan, mut rec: Receiver<InternalCommand>) {
                             chan.bg
                                 .try_send(InternalCommand::LogTrade(trade.clone()))
                                 .unwrap();
+                            chan.ws.try_send(InternalCommand::UpdateTrade(trade.clone())).unwrap();
+
                             info!("trade buy success");
                             info!("{}", trade.console_log());
 
@@ -622,6 +626,7 @@ pub async fn trade_chan(chan: Chan, mut rec: Receiver<InternalCommand>) {
                 });
             }
             Some(InternalCommand::PumpSwapMaybe(event)) => {
+
 
                 if rpc_state == RpcState::Busy {
                     continue;
