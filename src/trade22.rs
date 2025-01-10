@@ -528,19 +528,19 @@ impl Trade {
                     "tx": serialized_tx,
                     "skipPreflight": true
                 });
-                if self.is_buy() == false {
-                    if let Rpc::General {rpc,..} = rpc1() {
-                        info!("what is going on");
-                        rpc.send_transaction_with_config(&tx,RpcSendTransactionConfig{
-                            skip_preflight: true,
-                            preflight_commitment: Some(CommitmentLevel::Processed),
-                            encoding: None,
-                            max_retries: None,
-                            min_context_slot: None,
-                        }).await.unwrap();
-                        panic!("go go");
-                    }
-                }
+                // if self.is_buy() == false {
+                //     if let Rpc::General {rpc,..} = rpc1() {
+                //         info!("what is going on");
+                //         rpc.send_transaction_with_config(&tx,RpcSendTransactionConfig{
+                //             skip_preflight: false,
+                //             preflight_commitment: Some(CommitmentLevel::Processed),
+                //             encoding: None,
+                //             max_retries: None,
+                //             min_context_slot: None,
+                //         }).await.unwrap();
+                //         panic!("go go");
+                //     }
+                // }
 
                 let resp = rpc.send_txn(Some(params), true).await.unwrap();
                 let sig = resp["result"]
@@ -802,7 +802,20 @@ impl Trade {
                     },
                     self.is_buy()
                 ).unwrap();
-                instructions.push(pump_ix);
+                let a = spl_token::instruction::close_account(
+                    &token_program_id,
+                    &token,
+                    &kp.pubkey(),
+                    &kp.pubkey(),
+                    &[&kp.pubkey()],
+                )
+                    .unwrap();
+                instructions.extend_from_slice(&vec![
+                    pump_ix,
+                ]);
+                if !self.is_buy() {
+                    instructions.push(a);
+                }
             }
         }
 

@@ -4,6 +4,8 @@ use diesel_async::AsyncPgConnection;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Keypair;
 use std::sync::OnceLock;
+use mongodb::Client;
+use mongodb::options::{ClientOptions, ServerApi, ServerApiVersion};
 use rust_decimal::Decimal;
 use raydium_amm::solana_program::native_token::LAMPORTS_PER_SOL;
 
@@ -40,7 +42,7 @@ pub const PUMP_FEE:Pubkey = Pubkey::from_str_const("CebN5WGQ4jvEPvsVU4EoHEpgzq1V
 pub const SOLANA_PK: &str = env!("SOLANA_PK");
 
 
-    pub const PUMP_MIGRATION_PRICE:f64 = 0.0000004108264862252296;
+pub const PUMP_MIGRATION_PRICE:f64 = 0.0000004108264862252296;
 
 
 pub const RPC1: &str = env!("RPC1");
@@ -66,6 +68,7 @@ pub const GRPC1_NAME: &str = env!("GRPC1_NAME");
 pub const GRPC_LOCATION: &str = env!("GRPC1_LOCATION");
 
 pub const PG_URL: &str = env!("PG_URL");
+pub const MONGO_URL: &str = env!("MONGO_URL");
 pub const RAYDIUM_V4_PROGRAM:Pubkey = Pubkey::from_str_const("675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8");
 pub const RAYDIUM_V4_AUTHORITY:Pubkey = Pubkey::from_str_const("5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1");
 pub const SOLANA_SYSTEM_PROGRAM:Pubkey = Pubkey::from_str_const("11111111111111111111111111111111");
@@ -73,6 +76,7 @@ pub const SOLANA_RENT_PROGRAM:Pubkey = Pubkey::from_str_const("SysvarRent1111111
 pub const SOLANA_SERUM_PROGRAM:Pubkey = Pubkey::from_str_const("srmqPvymJeFKQ4zGQed1GFppgkRHL9kaELCbyksJtPX");
 pub const SOLANA_ATA_PROGRAM:Pubkey = Pubkey::from_str_const("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
 const PG_CON: tokio::sync::OnceCell<Pool<AsyncPgConnection>> = tokio::sync::OnceCell::const_new();
+const MONGO_CON: tokio::sync::OnceCell<mongodb::Database> = tokio::sync::OnceCell::const_new();
 
 pub async fn pg_conn() -> Pool<AsyncPgConnection> {
     PG_CON
@@ -85,15 +89,33 @@ pub async fn pg_conn() -> Pool<AsyncPgConnection> {
         .clone()
 }
 
+pub async fn mongo() -> mongodb::Database {
+    MONGO_CON
+        .get_or_init(|| async {
+            // Replace the placeholder with your Atlas connection string
+            let mut client_options = ClientOptions::parse(MONGO_URL).await.unwrap();
+            // Set the server_api field of the client_options object to Stable API version 1
+            let server_api = ServerApi::builder().version(ServerApiVersion::V1).build();
+            client_options.server_api = Some(server_api);
+            // Create a new client and connect to the server
+            let client = Client::with_options(client_options).unwrap();
+            client.database("wt")
+        })
+        .await
+        .clone()
+}
+
 pub struct Cfg {
     pub solana_ws_url: &'static str,
 }
 
 pub fn get_keypair() -> Keypair {
     KEYPAIR.get_or_init(|| {
-        Keypair::from_base58_string(
-            SOLANA_PK,
-        )
+        Keypair::from_bytes(
+            serde_json::from_str::<Vec<u8>>(SOLANA_PK)
+                .unwrap()
+                .as_slice(),
+        ).unwrap()
     }).insecure_clone()
 }
 

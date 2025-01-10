@@ -82,5 +82,7 @@ hyper = {version = "1.5.2"}
 http-body-util = {version = "0.1.2"}
 tokio-rustls = {version = "0.26.1"}
 webpki-roots = {version = "0.26.7"}
-
-colored = {version = "2.2.0"}
+colored = {version = "3.0.0"}
+ollama-rs = {version = "0.2.2", features = ["function-calling"]}
+schemars = {version = "1.0.0-alpha.17"}
+mongodb = {version = "3.1.1"}

@@ -13,3 +13,15 @@ fs.writeFileSync('keypair.json', secretKey);
 
 console.log('Public Key:', keypairData.publicKey.toString());
 console.log('Secret Key saved to keypair.json');
+
+
+startActual = 0.098861239
+projectedStart = 0.1
+tp =0.05
+fees = 0.3
+exit = startActual * (1 + tp)
+startExpense = startActual * 0.01
+feeExpense = (projectedStart * tp)*fees
+exitExpense = (startActual * (1+tp)) * 0.01
+totalExpense = feeExpense+exitExpense+startExpense
+balance = exit - totalExpense

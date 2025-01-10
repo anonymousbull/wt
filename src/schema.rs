@@ -35,7 +35,16 @@ diesel::table! {
     }
 }
 
+diesel::table! {
+    users (id) {
+        id -> Int8,
+        sk -> Text,
+        data -> Array<Nullable<Int4>>,
+    }
+}
+
 diesel::allow_tables_to_appear_in_same_query!(
     trade_prices,
     trades,
+    users,
 );

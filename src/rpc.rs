@@ -170,6 +170,10 @@ pub fn geyser() -> yellowstone_grpc_client::GeyserGrpcBuilder {
     yellowstone_grpc_client::GeyserGrpcClient::build_from_static(GRPC1)
 }
 
+pub fn rpc1_unchecked() -> RpcClient {
+    RpcClient::new_with_commitment(RPC1.to_string(), CommitmentConfig::processed())
+}
+
 pub fn rpc1() -> Rpc {
     Rpc::General {
         rpc: RpcClient::new_with_commitment(RPC1.to_string(), CommitmentConfig::processed()),

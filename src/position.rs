@@ -24,6 +24,7 @@ pub struct PositionConfig {
     pub pump_buy_gas_limit: u64,
     pub pump_sell_gas_limit: u64,
     pub tp: Decimal,
+    pub sl: Decimal,
     pub fee_pct: Decimal,
 }
 
