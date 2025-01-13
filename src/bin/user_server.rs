@@ -2,13 +2,17 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use diesel_async::pooled_connection::deadpool::Pool;
-use diesel_async::AsyncPgConnection;
-use wolf_trader::app_user_type::{User, UserWithId};
+use mongodb::Collection;
+use std::sync::atomic::AtomicI64;
+use std::sync::atomic::Ordering::SeqCst;
+use std::sync::Arc;
+use wolf_trader::app_user_type::UserWithId;
+use wolf_trader::constant::mongo;
 
 #[derive(Clone)]
 struct ServerState {
-    pub db: Pool<AsyncPgConnection>,
+    pub db: Collection<UserWithId>,
+    pub id: Arc<AtomicI64>
 }
 
 #[tokio::main]
@@ -17,25 +21,17 @@ async fn main() {
         .format_timestamp_millis()
         .init();
     tokio_rustls::rustls::crypto::aws_lc_rs::default_provider().install_default().expect("Failed to install rustls crypto provider");
-
-    // let config = axum_server::tls_rustls::RustlsConfig::from_pem_file(
-    //     PathBuf::new()
-    //         .join("cert.crt"),
-    //     PathBuf::new()
-    //         .join("cert.key"),
-    // )
-    //     .await
-    //     .unwrap();
     let cors_layer = tower_http::cors::CorsLayer::permissive();
-
-    let pg = wolf_trader::constant::pg_conn().await;
+    let mon = mongo().await;
+    let col = mon.collection::<UserWithId>("traders");
+    let id = UserWithId::count(&col).await;
     let app = Router::new()
         .route("/users", post(create_user).get(get_users))
         .route("/users/{id}", get(get_user).delete(delete_user))
         .with_state(ServerState {
-            db: pg
+            db: col,
+            id: Arc::new(AtomicI64::new(id))
         }).layer(cors_layer);
-    // run our app with hyper, listening globally on port 3000
     let listener = tokio::net::TcpListener::bind("0.0.0.0:5000").await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }
@@ -46,21 +42,22 @@ type HttpErrorResponse = (StatusCode,String);
 // Handler to create a new user
 async fn create_user(
     State(state): State<ServerState>,
-    Json(payload): Json<User>,
+    Json(mut payload): Json<UserWithId>,
 ) -> Result<Json<UserWithId>, HttpErrorResponse> {
-    let mut c = state.db.get().await.unwrap();
-    let user = payload.insert(&mut c)
+    let c = state.db;
+    payload.id = state.id.load(SeqCst)+1;
+    let user = payload.insert(&c)
         .await
         .map(|x| Json(x))
-        .map_err(internal_error);
-    user
-
+        .map_err(internal_error)?;
+    state.id.fetch_add(1, SeqCst);
+    Ok(user)
 }
 
 // Handler to retrieve all users
 async fn get_users(State(state): State<ServerState>) -> Result<Json<Vec<UserWithId>>,HttpErrorResponse> {
-    let mut c = state.db.get().await.unwrap();
-    Ok(Json(UserWithId::get_all(&mut c).await))
+    let c = state.db;
+    Ok(Json(UserWithId::get_all(&c).await.unwrap()))
 }
 
 // Handler to retrieve a specific user by ID
@@ -68,9 +65,10 @@ async fn get_user(
     State(state): State<ServerState>,
     axum::extract::Path(id): axum::extract::Path<i64>,
 ) -> Result<Json<UserWithId>,HttpErrorResponse> {
-    let mut c = state.db.get().await.unwrap();
-    UserWithId::get_by_id(id,&mut c)
+    let c = state.db;
+    UserWithId::get_by_id(id,&c)
         .await
+        .map_err(internal_error)?
         .map(|x| Json(x))
         .ok_or((StatusCode::NOT_FOUND,"User not found".to_string()))
 }
@@ -80,9 +78,12 @@ async fn delete_user(
     State(state): State<ServerState>,
     axum::extract::Path(id): axum::extract::Path<i64>,
 ) -> Result<Json<UserWithId>,HttpErrorResponse> {
-    let mut c = state.db.get().await.unwrap();
-   Ok(Json(UserWithId::delete_by_id(id,&mut c)
-       .await))
+    let c = state.db;
+    UserWithId::delete_by_id(id,&c)
+        .await
+        .map_err(internal_error)?
+        .ok_or((StatusCode::NOT_FOUND,"User not found".to_string()))
+        .map(|x| Json(x))
 }
 
 

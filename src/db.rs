@@ -237,3 +237,62 @@ macro_rules! implement_surreal {
         }
     };
 }
+
+#[macro_export]
+macro_rules! implement_mongo_crud {
+    ($struct_name:ident) => {
+        impl $struct_name {
+            pub async fn delete_one(&self, collection: &mongodb::Collection<$struct_name>) -> anyhow::Result<()> {
+                collection
+                    .delete_one(doc! { "id": self.id })
+                    .await?;
+                Ok(())
+            }
+
+            pub async fn delete_by_id(
+                id: i64,
+                collection: &mongodb::Collection<$struct_name>,
+            ) -> anyhow::Result<Option<$struct_name>> {
+                let deleted = collection
+                    .find_one_and_delete(doc! { "id": id })
+                    .await?;
+                Ok(deleted)
+            }
+
+            pub async fn count(collection: &mongodb::Collection<$struct_name>) -> i64 {
+                let count = collection.count_documents(doc! {}).await.unwrap();
+                count as i64
+            }
+
+            pub async fn insert_bulk(
+                collection: &mongodb::Collection<$struct_name>,
+                data: Vec<$struct_name>,
+            ) -> anyhow::Result<()> {
+                collection.insert_many(data).await?;
+                Ok(())
+            }
+
+            pub async fn insert(&self, collection: &mongodb::Collection<$struct_name>) -> anyhow::Result<Self> {
+                collection.insert_one(self).await?;
+                Ok(self.clone())
+            }
+
+            pub async fn get_by_id(
+                id: i64,
+                collection: &mongodb::Collection<$struct_name>,
+            ) -> anyhow::Result<Option<$struct_name>> {
+                let user = collection
+                    .find_one(doc! { "id": id })
+                    .await?;
+                Ok(user)
+            }
+
+            pub async fn get_all(collection: &mongodb::Collection<$struct_name>) -> anyhow::Result<Vec<$struct_name>> {
+                let mut cursor = collection.find(doc! {}).await?;
+                let users = cursor.try_collect().await?;
+                Ok(users)
+            }
+        }
+    };
+}
+
