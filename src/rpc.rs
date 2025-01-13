@@ -1,5 +1,6 @@
 use std::str::FromStr;
 use rust_decimal::Decimal;
+use schemars::JsonSchema;
 use crate::constant::*;
 use crate::jito_chan::TipStatistics;
 use serde::{Deserialize, Serialize};
@@ -8,7 +9,7 @@ use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::instruction::Instruction;
 use solana_sdk::signature::Signature;
 use solana_sdk::transaction::Transaction;
-use crate::trade22::TradeTransaction;
+use crate::trade_type::TradeTransaction;
 
 #[derive(Clone,Debug,Serialize,Deserialize)]
 pub struct RpcInfo {
@@ -101,10 +102,10 @@ pub struct TradeRpcLogGeneral {
     pub ix: Vec<Instruction>,
 }
 
-#[derive(Clone,Debug,Serialize,Deserialize,Default,PartialEq,Eq)]
+#[derive(Clone,Debug,Serialize,Deserialize,Default,PartialEq,Eq,JsonSchema)]
 pub enum RpcState {
     #[default]
-    Free,
+    Free=1,
     Busy
 }
 

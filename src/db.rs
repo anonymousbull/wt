@@ -1,3 +1,4 @@
+use diesel::RunQueryDsl;
 use log::info;
 use solana_sdk::pubkey::Pubkey;
 use tokio::fs::OpenOptions;
@@ -100,7 +101,31 @@ pub async fn update_ignore_mints(mint:String) {
 //     }
 // }
 
-
+#[macro_export]
+macro_rules! implement_diesel_insert {
+    ($struct_name:ident, $table_name:ident, $id_struct_name:ident) => {
+        impl $struct_name {
+            pub async fn insert_bulk(mut pg: &mut diesel_async::pooled_connection::deadpool::Object<diesel_async::AsyncPgConnection>, data: Vec<$id_struct_name>) -> anyhow::Result<()> {
+                // let start_time = ::std::time::Instant::now();
+                diesel::insert_into(crate::schema::$table_name::table)
+                    .values(&data)
+                    .execute(&mut pg).await?;
+                // let elapsed_time = start_time.elapsed();
+                // log::info!("Time taken for bulk insert: {} {} {:?}",data.len(), stringify!($table_name), elapsed_time);
+                Ok(())
+            }
+            pub async fn insert(&self,mut pg: &mut diesel_async::pooled_connection::deadpool::Object<diesel_async::AsyncPgConnection>) -> anyhow::Result<$id_struct_name> {
+                // let start_time = ::std::time::Instant::now();
+                let record = diesel::insert_into(crate::schema::$table_name::table)
+                    .values(self)
+                    .get_result(&mut pg).await?;
+                // let elapsed_time = start_time.elapsed();
+                // log::info!("Time taken for bulk insert: {} {:?}", stringify!($table_name), elapsed_time);
+                Ok(record)
+            }
+        }
+    };
+}
 
 
 #[macro_export]
@@ -111,6 +136,15 @@ macro_rules! implement_diesel {
                 diesel::delete(
                     crate::schema::$table_name::dsl::$table_name.filter(crate::schema::$table_name::dsl::id.eq(self.id.clone()))
                 ).execute(&mut c).await.unwrap();
+            }
+            pub async fn delete_by_id(id:i64, mut c: &mut Object<AsyncPgConnection>)->Self {
+                diesel::delete(
+                    crate::schema::$table_name::dsl::$table_name.filter(crate::schema::$table_name::dsl::id.eq(id.clone()))
+                )
+                .returning(crate::schema::$table_name::dsl::$table_name::all_columns())
+                .get_result(&mut c)
+                .await
+                .unwrap()
             }
             pub async fn id(mut c: &mut Object<AsyncPgConnection>) -> i64 {
                 crate::schema::$table_name::dsl::$table_name.select(
@@ -136,7 +170,11 @@ macro_rules! implement_diesel {
                 Ok(())
             }
 
-
+            pub async fn get_by_id(id:i64, mut c: &mut Object<AsyncPgConnection>) ->Option<Self>{
+                crate::schema::$table_name::dsl::$table_name.filter(
+                    crate::schema::$table_name::dsl::id.eq(id)
+                ).first(&mut c).await.ok()
+            }
 
             pub async fn get_all(mut c: &mut Object<AsyncPgConnection>) ->Vec<Self>{
                 crate::schema::$table_name::dsl::$table_name.select(

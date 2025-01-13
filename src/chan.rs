@@ -1,5 +1,3 @@
-
-
 use crate::cmd::{BroadcastCommand, InternalCommand};
 
 #[derive(Clone)]

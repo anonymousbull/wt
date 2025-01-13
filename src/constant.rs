@@ -26,7 +26,6 @@ pub const PUMP_SELL_CODE:[u8;8] = [51, 230, 133, 164, 1, 127, 131, 173];
 
 pub static KEYPAIR: OnceLock<Keypair> = OnceLock::new();
 pub const SURREAL_DB_URL: &str = env!("SURREAL_DB_URL");
-pub const ENABLE_WEBSOCKET: &str = env!("ENABLE_WEBSOCKET");
 pub const BLOX_HEADER: &str = env!("BLOX_HEADER");
 pub const NEXT_BLOCK: &str = env!("NEXT_BLOCK");
 pub const SOLANA_MINT_STR: &str = "So11111111111111111111111111111111111111112";
@@ -68,6 +67,9 @@ pub const GRPC1_NAME: &str = env!("GRPC1_NAME");
 pub const GRPC_LOCATION: &str = env!("GRPC1_LOCATION");
 
 pub const PG_URL: &str = env!("PG_URL");
+pub const SUPABASE_URL: &str = env!("SUPABASE_URL");
+pub const SUPABASE_PK: &str = env!("SUPABASE_PK");
+pub const SUPABASE_SK: &str = env!("SUPABASE_SK");
 pub const MONGO_URL: &str = env!("MONGO_URL");
 pub const RAYDIUM_V4_PROGRAM:Pubkey = Pubkey::from_str_const("675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8");
 pub const RAYDIUM_V4_AUTHORITY:Pubkey = Pubkey::from_str_const("5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1");

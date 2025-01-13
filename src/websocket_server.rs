@@ -1,6 +1,6 @@
-use crate::chan_type::Chan;
+use crate::chan::Chan;
 use crate::cmd::{BroadcastCommand, InternalCommand};
-use crate::trade22::TradeState;
+use crate::trade_type::TradeState;
 use fastwebsockets::Frame;
 use log::info;
 use std::hash::Hasher;
@@ -97,7 +97,7 @@ async fn handle_client(
                             }
                         } else if let Some(ref user_sk) = user_sk {
                             let (s, r) = oneshot::channel::<InternalCommand>();
-                            message.insert_str(0, &format!("user_sk={} ",user_sk));
+                            message.insert_str(0, &format!("user_sk={}: ",user_sk));
                             state.chan.dsl.try_send(InternalCommand::Dsl(user_sk.clone(),message,s)).unwrap();
 
                             match tokio::time::timeout(Duration::from_secs(10), r).await {

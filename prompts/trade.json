@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Trade",
+  "type": "object",
+  "properties": {
+    "state": {
+      "description": "state of trade",
+      "$ref": "#/$defs/TradeState"
+    },
+    "user_id": {
+      "description": "user id",
+      "type": "string"
+    },
+    "amm": {
+      "$ref": "#/$defs/TradePool"
+    },
+    "cfg": {
+      "description": "trade configuration settings",
+      "$ref": "#/$defs/PositionConfig"
+    },
+    "error": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "state",
+    "user_id",
+    "amm",
+    "cfg"
+  ],
+  "$defs": {
+    "TradeState": {
+      "oneOf": [
+        {
+          "description": "trade is in buy state with intent to buy later",
+          "type": "string",
+          "const": "Buy"
+        },
+        {
+          "description": "trade has been placed and pending buy confirmation",
+          "type": "string",
+          "const": "PendingBuy"
+        },
+        {
+          "description": "trade has been placed and buy was successful",
+          "type": "string",
+          "const": "BuySuccess"
+        },
+        {
+          "description": "trade is in sell state with intent to sell previous buy trade later",
+          "type": "string",
+          "const": "PendingSell"
+        },
+        {
+          "description": "trade has been placed and sell was successful",
+          "type": "string",
+          "const": "SellSuccess"
+        },
+        {
+          "description": "trade has been placed and buy was failed",
+          "type": "string",
+          "const": "BuyFailed"
+        },
+        {
+          "description": "trade has been placed and sell was failed",
+          "type": "string",
+          "const": "SellFailed"
+        }
+      ]
+    },
+    "TradePool": {
+      "oneOf": [
+        {
+          "description": "Raydium AMM v4 mint address only",
+          "type": "object",
+          "properties": {
+            "RayAmm4Mint": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "RayAmm4Mint"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "description": "Pump bonding curve mint address only",
+          "type": "object",
+          "properties": {
+            "PumpBondingCurveMint": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "PumpBondingCurveMint"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "PositionConfig": {
+      "type": "object",
+      "properties": {
+        "max_sol": {
+          "type": [
+            "string",
+            "number"
+          ],
+          "pattern": "^-?[0-9]+(\\.[0-9]+)?([eE][0-9]+)?$"
+        }
+      },
+      "required": [
+        "max_sol"
+      ]
+    }
+  }
+}

@@ -1,7 +1,7 @@
 use crate::constant::{RAYDIUM_V4_AUTHORITY, RAYDIUM_V4_PROGRAM, SOLANA_MINT, SOLANA_MINT_STR};
 use crate::position::PositionConfig;
 use crate::program_log::{ProgramLog, ProgramLogInfo};
-use crate::rpc::{rpc1, Rpc, RpcResponse, RpcResponseData, RpcResponseMetric, RpcType, TradeRpcLog, TradeRpcLogGeneral, TradeRpcLogJito, TradeRpcLogStatus};
+use crate::rpc::{rpc1, Rpc, RpcResponse, RpcResponseData, RpcResponseMetric, RpcState, RpcType, TradeRpcLog, TradeRpcLogGeneral, TradeRpcLogJito, TradeRpcLogStatus};
 use chrono::{DateTime, Utc};
 use raydium_amm::solana_program::native_token::{sol_to_lamports, LAMPORTS_PER_SOL};
 use rust_decimal::prelude::ToPrimitive;
@@ -23,52 +23,94 @@ use base64::Engine;
 use colored::Colorize;
 use futures::stream::FuturesUnordered;
 use log::{error, info};
+use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde_json::json;
 use solana_client::rpc_config::RpcSendTransactionConfig;
 use solana_sdk::commitment_config::CommitmentLevel;
+use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
+use crate::chan::Chan;
+use crate::cmd::InternalCommand;
+use crate::prompt_type::BuyPrompt;
 use crate::pump;
 use crate::pump::{PumpTrade, PumpTradeData};
 use crate::solana::*;
+use crate::type_dsl::CfgPrompt;
 
-#[derive(Clone, Debug,Serialize,Deserialize)]
+#[derive(Clone, Debug,Serialize,Deserialize,JsonSchema)]
 pub struct Trade {
+    #[schemars(skip)]
+    /// id of trade
     pub id: i64,
-    pub decimals: i16,
-    pub token_program_id: String,
 
+    #[schemars(skip)]
     pub amount: Decimal,
+    #[schemars(skip)]
+    /// buy time of trade in ISO 8601 combined date and time with time zone format
     pub buy_time: Option<DateTime<Utc>>,
+    /// buy price of trade
+    #[schemars(skip)]
     pub buy_price: Option<Decimal>,
+    #[schemars(skip)]
+    /// sell time of trade in ISO 8601 combined date and time with time zone format
     pub sell_time: Option<DateTime<Utc>>,
+    #[schemars(skip)]
     pub sell_price: Option<Decimal>,
 
+    /// pnl percentage of trade
+    #[schemars(skip)]
     pub pct: Decimal,
+    /// state of trade
     pub state: TradeState,
 
+    #[schemars(skip)]
     pub sol_before: Decimal,
+    #[schemars(skip)]
     pub sol_after: Option<Decimal>,
-
+    #[schemars(skip)]
     pub root_kp:Vec<u8>,
+    /// user id
+    pub user_id:String,
+    /// Asset to trade
     pub amm: TradePool,
+    #[schemars(skip)]
     pub user_wallet: String,
-
-    pub attempts: usize,
-    pub rpc_logs:Vec<TradeRpcLog>,
-
+    #[schemars(skip)]
     pub price:Decimal,
+    #[schemars(skip)]
     pub k: Decimal,
+    #[schemars(skip)]
     pub tvl:Decimal,
 
-    pub instructions: Vec<TradeInstruction>,
+    /// trade configuration settings
     pub cfg: PositionConfig,
-    pub transactions: Vec<TradeTransaction>,
     pub error: Option<String>,
-
+    #[schemars(skip)]
     pub plog:ProgramLog,
-
+    #[schemars(skip)]
     pub buy_out: Option<u64>,
+
+    #[schemars(skip)]
+    /// internal trade data, null by default
+    pub internal: Option<TradeInternal>
 }
+
+#[derive(Clone, Debug,Serialize,Deserialize)]
+pub struct TradeInternal {
+    pub instructions: Vec<TradeInstruction>,
+    pub transactions: Vec<TradeTransaction>,
+    pub rpc_status: RpcState,
+    pub rpc_logs:Vec<TradeRpcLog>,
+}
+
+#[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
+#[serde(tag = "name", content = "arguments")]
+pub enum TradeRequest2 {
+    /// Initiates a buy trade
+    Buy(Trade),
+
+}
+
 
 #[derive(Clone,Serialize,Deserialize,Debug)]
 pub enum TradeInstruction {
@@ -110,25 +152,54 @@ impl TradeInstruction {
     }
 }
 
-#[derive(Clone,Copy,Serialize,Deserialize,Debug)]
+
+
+#[derive(Clone,Copy,Serialize,Deserialize,Debug,JsonSchema)]
 pub struct PumpBondingCurve{
+    #[schemars(with = "String")]
     pub amm:Pubkey,
+    #[schemars(with = "String")]
     pub vault:Pubkey,
-    pub mint:Pubkey
+    #[schemars(with = "String")]
+    pub mint:Pubkey,
+    /// decimal places of asset
+    pub decimals: Option<i16>,
+    /// token_program_id
+    #[schemars(with = "String")]
+    pub token_program_id: Pubkey,
 }
 
-#[derive(Clone,Copy,Serialize,Deserialize,Debug)]
+#[derive(Clone,Copy,Serialize,Deserialize,Debug,JsonSchema)]
 pub struct RayAmm4{
+    #[schemars(with = "String")]
     pub amm:Pubkey,
+    #[schemars(with = "String")]
     pub coin_vault: Pubkey,
+    #[schemars(with = "String")]
     pub pc_vault: Pubkey,
+    #[schemars(with = "String")]
     pub coin_mint: Pubkey,
+    #[schemars(with = "String")]
     pub pc_mint: Pubkey,
+    /// decimal places of asset
+    pub decimals: Option<i16>,
+    /// token_program_id
+    #[schemars(with = "String")]
+    pub token_program_id: Pubkey,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+/// Mint information, used to determine what mint to buy or sell
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, JsonSchema)]
 pub enum TradePool {
+    /// Raydium AMM v4 mint address
+    RayAmm4Mint(#[schemars(with = "String")] Pubkey),
+    /// Pump bonding curve mint address
+    PumpBondingCurveMint(#[schemars(with = "String")] Pubkey),
+    #[schemars(skip)]
+    /// Raydium AMM v4 object
     RayAmm4(RayAmm4),
+    #[schemars(skip)]
+    /// Pump bonding curve object
     PumpBondingCurve(PumpBondingCurve),
 }
 
@@ -137,12 +208,14 @@ impl TradePool {
         match self {
             TradePool::RayAmm4(v) => v.amm.to_string(),
             TradePool::PumpBondingCurve(v) => v.amm.to_string(),
+            _ => unreachable!()
         }
     }
     pub fn amm(&self) ->Pubkey{
         match self {
             TradePool::RayAmm4(v) => v.amm,
             TradePool::PumpBondingCurve(v) => v.amm,
+            _ => unreachable!()
         }
     }
 }
@@ -176,15 +249,22 @@ pub struct TradeResponse {
 pub type TradeResponseResult = Result<TradeResponse, TradeResponseError>;
 
 #[repr(i32)]
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, PartialEq, Hash, Default)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, PartialEq, Hash, Default, JsonSchema)]
 pub enum TradeState {
     #[default]
+    /// trade is in buy state with intent to buy later
     Buy = 1,
+    /// trade has been placed and pending buy confirmation
     PendingBuy,
+    /// trade has been placed and buy was successful
     BuySuccess,
+    /// trade is in sell state with intent to sell previous buy trade later
     PendingSell,
+    /// trade has been placed and sell was successful
     SellSuccess,
+    /// trade has been placed and buy was failed
     BuyFailed,
+    /// trade has been placed and sell was failed
     SellFailed
 }
 
@@ -218,49 +298,48 @@ impl std::fmt::Display for TradeResponseError {
 
 pub struct NewTrade {
     pub amm:TradePool,
-    pub token_program_id: Pubkey,
     pub user_wallet: Pubkey,
-    pub cfg: PositionConfig,
     pub log: String,
 }
 
 impl Trade {
+    pub fn update_rpc_status(&mut self, status: RpcState) {
+        let mut internal = self.internal_unchecked().clone();
+        internal.rpc_status = status;
+        self.internal = Some(internal);
+    }
+    pub fn extend_rpc_logs(&mut self, log:&Vec<TradeRpcLog>){
+        let mut internal = self.internal_unchecked().clone();
+        internal.rpc_logs.extend_from_slice(log);
+        internal.rpc_logs.dedup();
+        self.internal = Some(internal);
+    }
+    pub fn push_rpc_logs(&mut self, log:TradeRpcLog){
+        let mut internal = self.internal_unchecked().clone();
+        internal.rpc_logs.push(log);
+        internal.rpc_logs.dedup();
+        self.internal = Some(internal);
+    }
+    pub fn push_instructions(&mut self, data:TradeInstruction){
+        let mut internal = self.internal_unchecked().clone();
+        internal.instructions.push(data);
+        self.internal = Some(internal);
+    }
+    pub fn internal_unchecked(&self) -> &TradeInternal {
+        self.internal.as_ref().unwrap()
+    }
     pub fn try_new(
+        mut self,
         new_trade: NewTrade
-    )->anyhow::Result<Self>{
-        let NewTrade{amm,token_program_id,user_wallet,cfg, log} = new_trade;
-        Self {
-            id: 0,
-            decimals: 0,
-            token_program_id:token_program_id.to_string(),
-            user_wallet: user_wallet.to_string(),
-            amm,
-            cfg,
-            amount: Default::default(),
-            buy_time: None,
-            buy_price: None,
-            sell_time: None,
-            sell_price: None,
-            pct: Default::default(),
-            state: Default::default(),
-            sol_before: Default::default(),
-            sol_after: None,
-            root_kp: vec![],
-            attempts: 0,
-            rpc_logs: vec![],
-            price: Default::default(),
-            k: Default::default(),
-            tvl: Default::default(),
-            instructions: vec![],
-            transactions: vec![],
-            error: None,
-            plog: Default::default(),
-            buy_out: None,
-        }.update_price_from_log(log, true)
+    ) ->anyhow::Result<Self>{
+        let NewTrade{amm,user_wallet, log} = new_trade;
+        self.amm = amm;
+        self.user_wallet = user_wallet.to_string();
+        self.update_price_from_log(log, true)
     }
     pub fn console_log(&self) -> String {
         let mut json = json!({});
-        let success_signature = self.rpc_logs.iter().find_map(|x|
+        let success_signature = self.internal_unchecked().rpc_logs.iter().find_map(|x|
             match x {
                 TradeRpcLog::SellJito(v, TradeRpcLogStatus::Success) => Some(v.general.signature.to_string()),
                 TradeRpcLog::SellGeneral(v, TradeRpcLogStatus::Success) => Some(v.signature.to_string()),
@@ -270,6 +349,7 @@ impl Trade {
             }
         );
         let jito_tip = self
+            .internal_unchecked()
             .rpc_logs
             .iter()
             .find_map(|x| match x {
@@ -289,7 +369,7 @@ impl Trade {
         json.to_string()
     }
     pub fn tx_id_unchecked(&self) ->Option<Signature>{
-        self.rpc_logs.iter().find_map(|x|Some(x.signature()))
+        self.internal_unchecked().rpc_logs.iter().find_map(|x|Some(x.signature()))
 
     }
     pub fn jito_fee_sol_ui(&self) ->Decimal {
@@ -310,7 +390,7 @@ impl Trade {
         } else {
             unreachable!()
         };
-        let txs = self.instructions.iter().map(|x|{
+        let txs = self.internal_unchecked().instructions.iter().map(|x|{
             match x {
                 TradeInstruction::Jito(v) => {
                     TradeTransaction::Jito(
@@ -334,7 +414,10 @@ impl Trade {
                 }
             }
         }).collect::<Vec<_>>();
-        self.transactions = txs;
+        let mut internal = self.internal_unchecked().clone();
+        internal.transactions =txs;
+
+        self.internal = Some(internal);
         self
     }
     pub fn is_buy(&self)->bool{
@@ -353,15 +436,34 @@ impl Trade {
         }
     }
 
+    pub fn decimals(&self) -> i16 {
+        match self.amm {
+            TradePool::RayAmm4(_) => 6,
+            TradePool::PumpBondingCurve(_) => 6,
+            _ => unreachable!()
+        }
+    }
+
+    pub fn update_decimals(&mut self, decimals: i16) {
+        match self.amm {
+            TradePool::RayAmm4(ref mut z) => {
+                z.decimals = Some(decimals);
+            }
+            _ => unreachable!()
+        }
+    }
+
     pub fn update_price_from_log(mut self, log:String, next:bool) -> anyhow::Result<Self> {
         let plog = ProgramLog::from(log.clone())?;
         let (pc,coin) = match &plog.log {
             ProgramLogInfo::RayInitLog(init) => {
-                self.decimals = if init.pc_decimals == 9 {
-                    init.coin_decimals
-                } else {
-                    init.pc_decimals
-                } as i16;
+                self.update_decimals(
+                    if init.pc_decimals == 9 {
+                        init.coin_decimals
+                    } else {
+                        init.pc_decimals
+                    } as i16
+                );
                 (init.pc_amount, init.coin_amount)
             }
             ProgramLogInfo::RaySwapBaseIn(swap) => {
@@ -379,7 +481,7 @@ impl Trade {
                 }
             }
             ProgramLogInfo::PumpTradeLog(c) => {
-                self.decimals = 6;
+                self.update_decimals(6);
                 (plog.next_pc, plog.next_coin)
             }
             _ => {
@@ -391,7 +493,7 @@ impl Trade {
         let token_amount = max(pc, coin);
 
         // 1000
-        let token_amount_ui = Decimal::from(token_amount) / dec!(10).powd(Decimal::from(self.decimals));
+        let token_amount_ui = Decimal::from(token_amount) / dec!(10).powd(Decimal::from(self.decimals()));
         // 1
         let sol_amount_ui = Decimal::from(sol_amount) / Decimal::from(LAMPORTS_PER_SOL);
         // 1 MEMECOIN = 0.0001 SOL
@@ -416,7 +518,7 @@ impl Trade {
                     unreachable!()
                 }
             }
-            TradePool::PumpBondingCurve(_) => SOLANA_MINT
+            _ => SOLANA_MINT,
         }
     }
     pub fn mint(&self) -> Pubkey {
@@ -433,6 +535,8 @@ impl Trade {
             TradePool::PumpBondingCurve(amm) => {
                 amm.mint
             }
+            TradePool::RayAmm4Mint(mint) => mint,
+            TradePool::PumpBondingCurveMint(mint) => mint
         }
 
     }
@@ -440,7 +544,11 @@ impl Trade {
         Keypair::from_bytes(&self.root_kp).unwrap()
     }
     pub fn token_program(&self)->Pubkey{
-        Pubkey::from_str(&self.token_program_id.as_str()).unwrap()
+        match self.amm {
+            TradePool::RayAmm4(z) => z.token_program_id,
+            TradePool::PumpBondingCurve(z) => z.token_program_id,
+            _ => unreachable!()
+        }
     }
     pub fn amm(&self)->Pubkey{
         self.amm.amm()
@@ -450,9 +558,7 @@ impl Trade {
             TradePool::RayAmm4(amm) => {
                 amm.coin_mint
             }
-            TradePool::PumpBondingCurve(_) => {
-                unreachable!()
-            }
+            _ => unreachable!()
         }
     }
     pub fn pc_mint(&self)->Pubkey{
@@ -460,9 +566,7 @@ impl Trade {
             TradePool::RayAmm4(amm) => {
                 amm.pc_mint
             }
-            TradePool::PumpBondingCurve(_) => {
-                unreachable!()
-            }
+            _ => unreachable!()
         }
     }
     pub fn coin_vault(&self)->Pubkey{
@@ -470,9 +574,7 @@ impl Trade {
             TradePool::RayAmm4(amm) => {
                 amm.coin_vault
             }
-            TradePool::PumpBondingCurve(_) => {
-                unreachable!()
-            }
+            _ => unreachable!()
         }
     }
     pub fn pc_vault(&self)->Pubkey{
@@ -480,9 +582,7 @@ impl Trade {
             TradePool::RayAmm4(amm) => {
                 amm.pc_vault
             }
-            TradePool::PumpBondingCurve(_) => {
-                unreachable!()
-            }
+            _ => unreachable!()
         }
     }
     pub fn is_sol_pool(&self) -> bool {
@@ -490,9 +590,7 @@ impl Trade {
             TradePool::RayAmm4(amm) => {
                 amm.pc_mint == SOLANA_MINT || amm.coin_mint == SOLANA_MINT
             }
-            TradePool::PumpBondingCurve(_) => {
-                unreachable!()
-            }
+            _ => unreachable!()
         }
     }
     pub async fn send_many(mut self, rpcs: Vec<Rpc>)->FuturesUnordered<JoinHandle<Result<Trade,Trade>>>{
@@ -516,10 +614,10 @@ impl Trade {
             Rpc::Jito { rpc,info,.. } => {
                 let mut trade = self.clone();
 
-                let tx = trade.transactions.iter()
+                let tx = trade.internal_unchecked().transactions.iter()
                     .find(|&x|matches!(x, TradeTransaction::Jito(_)))
                     .unwrap().transaction().clone();
-                let ix = trade.instructions.iter()
+                let ix = trade.internal_unchecked().instructions.iter()
                     .find(|x|matches!(x, TradeInstruction::Jito(_)))
                     .unwrap().instructions().clone();
                 let serialized_tx =
@@ -567,10 +665,10 @@ impl Trade {
                     };
                     if trade.is_buy() {
                         trade.state = TradeState::PendingBuy;
-                        trade.rpc_logs.push(TradeRpcLog::BuyJito(log,TradeRpcLogStatus::Pending));
+                        trade.push_rpc_logs(TradeRpcLog::BuyJito(log,TradeRpcLogStatus::Pending));
                     } else {
                         trade.state = TradeState::PendingSell;
-                        trade.rpc_logs.push(TradeRpcLog::SellJito(log,TradeRpcLogStatus::Pending));
+                        trade.push_rpc_logs(TradeRpcLog::SellJito(log,TradeRpcLogStatus::Pending));
                     }
                     trade
                 })
@@ -578,10 +676,10 @@ impl Trade {
             Rpc::General { rpc,info } => {
                 let mut trade = self.clone();
 
-                let tx = trade.transactions.iter()
+                let tx = trade.internal_unchecked().transactions.iter()
                     .find(|x|matches!(x, TradeTransaction::General(_)))
                     .unwrap().transaction().clone();
-                let ix = trade.instructions.iter()
+                let ix = trade.internal_unchecked().instructions.iter()
                     .find(|x|matches!(x, TradeInstruction::General(_)))
                     .unwrap().instructions().clone();
 
@@ -608,10 +706,10 @@ impl Trade {
                     };
                     if trade.is_buy() {
                         trade.state = TradeState::PendingBuy;
-                        trade.rpc_logs.push(TradeRpcLog::BuyGeneral(log,TradeRpcLogStatus::Pending));
+                        trade.push_rpc_logs(TradeRpcLog::BuyGeneral(log,TradeRpcLogStatus::Pending));
                     } else {
                         trade.state = TradeState::PendingSell;
-                        trade.rpc_logs.push(TradeRpcLog::SellGeneral(log,TradeRpcLogStatus::Pending));
+                        trade.push_rpc_logs(TradeRpcLog::SellGeneral(log,TradeRpcLogStatus::Pending));
                     }
                     trade
                 })
@@ -620,14 +718,14 @@ impl Trade {
             }
         }
             .map(|mut x|{
-                x.transactions = Default::default();
-                x.instructions = Default::default();
+                // x.transactions = Default::default();
+                // x.instructions = Default::default();
                 x
             })
             .map_err(|x|{
-                self.transactions = Default::default();
-                self.instructions = Default::default();
-            self.error = Some(x.to_string());
+                // self.transactions = Default::default();
+                // self.instructions = Default::default();
+                self.error = Some(x.to_string());
             if self.is_buy() {
                 self.state = TradeState::BuyFailed;
             } else {
@@ -641,15 +739,15 @@ impl Trade {
     pub fn build_instructions(mut self) -> Self {
         let one = dec!(1);
         let gas_limit = match self.amm {
-            TradePool::RayAmm4(_) => {
+            TradePool::RayAmm4(_)|TradePool::RayAmm4Mint(_) => {
                 if self.is_buy() {
                     self.cfg.ray_buy_gas_limit
                 } else {
                     self.cfg.ray_sell_gas_limit
                 }
             }
-            TradePool::PumpBondingCurve(_) => {
-            if self.is_buy() {
+            TradePool::PumpBondingCurve(_)|TradePool::PumpBondingCurveMint(_) => {
+                if self.is_buy() {
                     self.cfg.pump_buy_gas_limit
                 } else {
                     self.cfg.pump_sell_gas_limit
@@ -678,7 +776,7 @@ impl Trade {
         // 2. https://solscan.io/tx/4eu6cNN8b8EtDSYcaqco1BbEirVcEDep1TTnd2v2cAJXKsKC6VCWw4mavC3YN2MoFyPvpMMCQL5XcuQ36W1wQafB
         // amount higher than slippage
         // 1. got exact price
-        let decimals = self.decimals;
+        let decimals = self.decimals();
         let max_in_token_ui = cfg.max_sol / self.price;
         let max_in_sol = cfg.max_sol * lamports_per_sol_dec();
 
@@ -817,6 +915,7 @@ impl Trade {
                     instructions.push(a);
                 }
             }
+            _ => unreachable!()
         }
 
 
@@ -851,17 +950,17 @@ impl Trade {
                             ),
                         ][..]
                     ].concat();
-                    self.instructions.push(TradeInstruction::Jito(jito_instructions));
+                    self.push_instructions(TradeInstruction::Jito(jito_instructions));
                 }
                 RpcType::General => {
-                    self.instructions.push(TradeInstruction::General(instructions.clone()));
+                    self.push_instructions(TradeInstruction::General(instructions.clone()));
                 }
             }
         });
         self
     }
 
-    pub fn from_raydium_init(accounts: &[Pubkey], cfg: PositionConfig, log: String) -> anyhow::Result<Self> {
+    pub fn with_raydium_init(self,accounts: &[Pubkey], cfg: PositionConfig, log: String) -> anyhow::Result<Self> {
         let token_program_id = accounts[0].to_string();
         let amm = accounts[4].to_string();
         let coin_mint = accounts[8].to_string();
@@ -869,24 +968,24 @@ impl Trade {
         let coin_vault = accounts[10].to_string();
         let pc_vault = accounts[11].to_string();
         let user_wallet = accounts[17].to_string();
-        Self::try_new(
+        self.try_new(
             NewTrade{
                 log,
-                cfg,
                 amm:TradePool::RayAmm4(RayAmm4{
                     amm:Pubkey::from_str_const(amm.as_str()),
                     coin_vault:Pubkey::from_str_const(coin_vault.as_str()),
                     pc_vault:Pubkey::from_str_const(pc_vault.as_str()),
                     coin_mint:Pubkey::from_str_const(coin_mint.as_str()),
                     pc_mint:Pubkey::from_str_const(pc_mint.as_str()),
+                    token_program_id: Pubkey::from_str_const(token_program_id.as_str()),
+                    decimals: None
                 }),
-                token_program_id:Pubkey::from_str_const(token_program_id.as_str()),
                 user_wallet:Pubkey::from_str_const(user_wallet.as_str()),
             }
         )
     }
 
-    pub fn from_pump_swap(accounts: &[Pubkey], cfg: PositionConfig, log: String) -> anyhow::Result<Self> {
+    pub fn with_pump_swap(self, accounts: &[Pubkey], log: String) -> anyhow::Result<Self> {
         let token_program_id = accounts[8].to_string();
         let amm = accounts[3].to_string();
         let mint = accounts[2].to_string();
@@ -894,17 +993,17 @@ impl Trade {
         let vault = accounts[4].to_string();
         let pc_vault = accounts[11].to_string();
         let user_wallet = accounts[6].to_string();
-        Self::try_new(
+        self.try_new(
             NewTrade{
                 log,
                 amm:TradePool::PumpBondingCurve(PumpBondingCurve{
                     amm:Pubkey::from_str_const(amm.as_str()),
                     vault:Pubkey::from_str_const(vault.as_str()),
                     mint:Pubkey::from_str_const(mint.as_str()),
+                    token_program_id:Pubkey::from_str_const(token_program_id.as_str()),
+                    decimals: None
                 }),
-                token_program_id:Pubkey::from_str_const(token_program_id.as_str()),
                 user_wallet:Pubkey::from_str_const(user_wallet.as_str()),
-                cfg,
             }
         )
     }

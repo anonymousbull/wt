@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CfgPrompt",
+  "description": "Global trade configuration",
+  "type": "object",
+  "properties": {
+    "user_sk": {
+      "description": "The user's secret key",
+      "type": "string"
+    },
+    "tp": {
+      "description": "Take profit percentage",
+      "type": "number",
+      "format": "double"
+    },
+    "sl": {
+      "description": "Stop loss percentage",
+      "type": "number",
+      "format": "double"
+    }
+  },
+  "required": [
+    "user_sk",
+    "tp",
+    "sl"
+  ]
+}

@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"SellPrompt","description":"Configuration to close existing trade at current prices","type":"object","properties":{"mint":{"description":"mint address to close","type":"string"}},"required":["mint"]}

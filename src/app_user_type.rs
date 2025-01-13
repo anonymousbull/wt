@@ -1,17 +1,31 @@
 use crate::db::diesel_export::*;
-use crate::implement_diesel;
-use crate::trade22::Trade;
+use crate::{implement_diesel, implement_diesel_insert};
+use crate::trade_type::Trade;
 use mongodb::bson::doc;
 use serde::{Deserialize, Serialize};
 
+#[derive(Queryable, Selectable, Insertable, AsChangeset, Identifiable)]
+#[diesel(table_name = crate::schema::users)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct User {
+pub struct UserWithId {
     pub id: i64,
-    pub sk: String,
-    pub trade: Trade,
+    pub private_key: String,
 }
 
-impl User {
+#[derive(Selectable, Insertable, AsChangeset)]
+#[diesel(table_name = crate::schema::users)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct User {
+    pub private_key: String,
+}
+
+implement_diesel!(UserWithId, users);
+implement_diesel_insert!(User, users, UserWithId);
+
+
+impl UserWithId {
     // pub async fn get_by_sk(sk: &str, mut c: &mut Object<AsyncPgConnection>) -> Option<Self> {
     //     crate::schema::users::dsl::users
     //         .filter(crate::schema::users::dsl::sk.eq(sk))

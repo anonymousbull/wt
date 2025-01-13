@@ -6,7 +6,7 @@ use reqwest::Client;
 use tokio::fs::OpenOptions;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use crate::cmd::InternalCommand;
-use crate::trade22::{Trade};
+use crate::trade_type::{Trade};
 
 pub async fn bg_chan(mut rec: Receiver<InternalCommand>) {
     let client = Client::new();

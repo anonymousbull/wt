@@ -28,8 +28,10 @@ restart name:
     pm2 restart {{name}}
 serve env:
     DATABASE_UsRL=$PG_URL_{{env}} ENV={{env}} RUST_BACKTRACE=1 pm2 start --name rust -x "cargo" --interpreter none -- r -r --bin femimarket
+user-serve:
+    cargo r -r --bin user_server
 rust:
-    ENABLE_WEBSOCKET=n RUSTFLAGS="--cfg tokio_unstable" RUST_BACKTRACE=1 cargo r -r --bin wolf_trader
+    cargo r -r --bin wolf_trader
 rust-ws:
     ENABLE_WEBSOCKET=y RUSTFLAGS="--cfg tokio_unstable" RUST_BACKTRACE=1 cargo r -r --bin wolf_trader
 trade action coin:

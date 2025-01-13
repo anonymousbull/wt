@@ -1,11 +1,12 @@
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use wolf_trader::chan_bg::bg_chan;
-use wolf_trader::chan_dsl::dsl_chan;
-use wolf_trader::chan_type::Chan;
+use wolf_trader::prompt_chan::{dsl_chan, export_prompt_schema};
+use wolf_trader::chan::Chan;
 use wolf_trader::cmd::{BroadcastCommand, InternalCommand};
 use wolf_trader::jito_chan::jito_chan;
-use wolf_trader::chan_trade::trade_chan;
+use wolf_trader::trade_chan::trade_chan;
+use wolf_trader::web_server;
 use wolf_trader::websocket_server::{start_websocket_server, WebsocketState};
 
 #[tokio::main]
@@ -34,8 +35,9 @@ async fn main() {
     let (trade_send, trade_r) = tokio::sync::mpsc::channel::<InternalCommand>(500);
     let (ws_s, ws_r) = tokio::sync::mpsc::channel::<InternalCommand>(500);
     let (dsl_s, dsl_r) = tokio::sync::mpsc::channel::<InternalCommand>(500);
+    let (web_s, web_r) = tokio::sync::mpsc::channel::<InternalCommand>(500);
     let (ws,_) = tokio::sync::broadcast::channel::<BroadcastCommand>(500);
-
+    export_prompt_schema();
     let chan = Chan{
         bg: bg_send,
         trade: trade_send,
@@ -61,12 +63,19 @@ async fn main() {
         }
     });
 
-    // tokio::spawn({
-    //     let chan = chan.clone();
-    //     async move {
-    //         trade_chan(chan,trade_r).await;
-    //     }
-    // });
+    tokio::spawn({
+        let chan = chan.clone();
+        async move {
+            web_server::start(chan).await;
+        }
+    });
+
+    tokio::spawn({
+        let chan = chan.clone();
+        async move {
+            trade_chan(chan,trade_r).await;
+        }
+    });
 
 
     start_websocket_server(Arc::new(WebsocketState{

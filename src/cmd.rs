@@ -1,6 +1,7 @@
-use crate::chan_trade::{InterestedTx};
+use solana_sdk::signature::Keypair;
+use crate::trade_chan::{InterestedTx};
 use crate::jito_chan::TipStatistics;
-use crate::trade22::{Trade, TradePrice, TradeResponseResult};
+use crate::trade_type::{Trade, TradePrice, TradeResponseResult};
 
 
 
@@ -142,10 +143,18 @@ pub enum BroadcastCommand {
 
 #[derive(Debug)]
 pub enum InternalCommand {
+    TradeResponse(Trade),
+
+    LoginResponse(Option<Trade>),
+    LoginRequest(Keypair,tokio::sync::oneshot::Sender<InternalCommand>),
+    TradeRequest(Trade,tokio::sync::oneshot::Sender<InternalCommand>),
     DslResponse(String),
     Dsl(String,String,tokio::sync::oneshot::Sender<InternalCommand>),
     RpcTradeResponse(Result<Trade,Trade>),
-    PumpSwapMaybe(InterestedTx),
+    PumpSwapMaybe {
+        trade: Trade,
+        interested_tx: InterestedTx
+    },
     JitoTip(TipStatistics),
     SellTradeSuccess(Trade),
     BuyTradeSuccess(Trade),

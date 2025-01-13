@@ -4,7 +4,8 @@ use schemars::{schema_for, JsonSchema};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use solana_sdk::pubkey::Pubkey;
-use crate::trade22::Trade;
+use crate::prompt_type::BuyPrompt;
+use crate::trade_type::Trade;
 
 impl Trade {
     pub fn update(&mut self, input: String) {
@@ -23,30 +24,23 @@ fn extract_sl_float(input: &str) -> Option<(i32,f64)> {
     ))
 }
 
-#[derive(Deserialize, Serialize, Clone, Debug)]
+#[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 #[serde(tag = "name", content = "arguments")]
 pub enum PromptResponse {
     Config(CfgPrompt),
-    Balance(BalancePrompt),
+    Trade(BuyPrompt),
 }
 
 
-/// Trade configuration
+/// Global trade configuration
 #[derive(JsonSchema, Deserialize, Serialize, Clone, Debug)]
 pub struct CfgPrompt {
     /// The user's secret key
     pub user_sk: String,
     /// Take profit percentage
-    pub tp: Option<f64>,
+    pub tp: f64,
     /// Stop loss percentage
-    pub sl: Option<f64>,
-}
-
-#[derive(JsonSchema, Deserialize, Serialize)]
-pub struct TradePrompt {
-    pub user_sk: String,
-    pub sol_ui: f64,
-    pub mint: String,
+    pub sl: f64,
 }
 
 #[derive(JsonSchema, Deserialize, Serialize, Clone, Debug)]

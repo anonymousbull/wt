@@ -6,7 +6,7 @@ use solana_sdk::program_pack::Pack;
 use wolf_trader::constant::{SURREAL_DB_URL};
 use wolf_trader::position::PositionConfig;
 use wolf_trader::rpc::{send_tx, solana_rpc_client};
-use wolf_trader::trade22::Trade;
+use wolf_trader::trade_type::Trade;
 
 #[tokio::main]
 async fn main() {

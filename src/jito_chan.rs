@@ -4,7 +4,7 @@ use fastwebsockets::OpCode;
 use log::{error, info};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use crate::chan_type::Chan;
+use crate::chan::Chan;
 use crate::cmd::InternalCommand;
 
 #[derive(Debug, Serialize, Deserialize,Clone,Copy)]

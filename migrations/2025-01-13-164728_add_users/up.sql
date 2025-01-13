@@ -3,7 +3,6 @@
 
 CREATE TABLE "users"(
 	"id" INT8 NOT NULL PRIMARY KEY,
-	"sk" TEXT NOT NULL,
-	"data" BYTEA NOT NULL
+	"private_key" TEXT NOT NULL
 );
 
