@@ -1,0 +1,48 @@
+[package]
+name = "trade-engine"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+mongodb = { workspace = true}
+redis = {workspace = true, features = ["rust_decimal","json","tokio-native-tls-comp", "connection-manager"]}
+axum = {workspace = true}
+tower = {version = "0.5.2"}
+rdkafka = {workspace = true, features = ["ssl"]}
+tokio = {workspace = true, features = ["full","tracing"]}
+anyhow = {workspace = true}
+futures = { version = "0.3" }
+serde = { workspace = true, features = ["derive"]}
+serde_json = {workspace = true, features = ["preserve_order"]}
+rust_decimal = {version =  "1.36.0", features = ["db-diesel2-postgres","maths"]}
+rust_decimal_macros = { version = "1.36.0" }
+chrono = {version = "0.4.38", features = ["serde"]}
+env_logger = {version =  "0.11.3" }
+log = {version =  "0.4.21" }
+bincode = {workspace = true}
+bs58 = { workspace = true}
+base64 = {workspace = true}
+schemars = {workspace = true, features = ["rust_decimal1","chrono04"]}
+fastrand = {version = "2.3.0"}
+
+macros = { path = "../../util/macros" }
+users-api = { path = "../users-api" }
+
+raydium_amm = {path = "../../raydium/amm"}
+amm-cli = {path = "../../raydium/amm_cli", optional = true}
+common = {path = "../../raydium/common", optional = true}
+serum_dex = {path = "../../raydium/serum_dex", optional = true}
+
+yellowstone-grpc-client = {workspace = true}
+yellowstone-grpc-proto = {workspace = true}
+jito-sdk-rust = {version = "0.1.0"}
+
+solana-client = {workspace = true}
+solana-sdk = {workspace = true}
+solana-transaction-status = {workspace = true}
+spl-token = { workspace = true}
+spl-associated-token-account = {workspace = true}
+spl-token-2022 = { workspace = true}
+mpl-token-metadata = { workspace = true}
+spl-associated-token-account-client = {workspace = true}
+solana-account-decoder = {workspace = true}

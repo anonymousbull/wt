@@ -1,27 +1,16 @@
-use futures::TryStreamExt;
 use crate::db::diesel_export::*;
-use crate::{implement_diesel, implement_diesel_insert, implement_mongo_crud};
-use crate::trade_type::Trade;
+use crate::implement_mongo_crud;
+use futures::TryStreamExt;
 use mongodb::bson::doc;
-use mongodb::{bson, Collection};
 use serde::{Deserialize, Serialize};
 
-#[derive(Queryable, Selectable, Insertable, AsChangeset, Identifiable)]
-#[diesel(table_name = crate::schema::users)]
-#[diesel(check_for_backend(diesel::pg::Pg))]
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserWithId {
     pub id: i64,
     pub private_key: String,
 }
 
-#[derive(Selectable, Insertable, AsChangeset)]
-#[diesel(table_name = crate::schema::users)]
-#[diesel(check_for_backend(diesel::pg::Pg))]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct User {
-    pub private_key: String,
-}
 
 // implement_mongo_crud!(UserWithId);
 implement_mongo_crud!(UserWithId);

@@ -244,7 +244,7 @@ macro_rules! implement_mongo_crud {
         impl $struct_name {
             pub async fn delete_one(&self, collection: &mongodb::Collection<$struct_name>) -> anyhow::Result<()> {
                 collection
-                    .delete_one(doc! { "id": self.id })
+                    .delete_one(mongodb::bson::doc! { "id": self.id })
                     .await?;
                 Ok(())
             }
@@ -254,13 +254,13 @@ macro_rules! implement_mongo_crud {
                 collection: &mongodb::Collection<$struct_name>,
             ) -> anyhow::Result<Option<$struct_name>> {
                 let deleted = collection
-                    .find_one_and_delete(doc! { "id": id })
+                    .find_one_and_delete(mongodb::bson::doc! { "id": id })
                     .await?;
                 Ok(deleted)
             }
 
             pub async fn count(collection: &mongodb::Collection<$struct_name>) -> i64 {
-                let count = collection.count_documents(doc! {}).await.unwrap();
+                let count = collection.count_documents(mongodb::bson::doc! {}).await.unwrap();
                 count as i64
             }
 
@@ -282,14 +282,83 @@ macro_rules! implement_mongo_crud {
                 collection: &mongodb::Collection<$struct_name>,
             ) -> anyhow::Result<Option<$struct_name>> {
                 let user = collection
-                    .find_one(doc! { "id": id })
+                    .find_one(mongodb::bson::doc! { "id": id })
                     .await?;
                 Ok(user)
             }
 
             pub async fn get_all(collection: &mongodb::Collection<$struct_name>) -> anyhow::Result<Vec<$struct_name>> {
-                let mut cursor = collection.find(doc! {}).await?;
+                use futures::TryStreamExt;
+                let mut cursor = collection.find(mongodb::bson::doc! {}).await?;
                 let users = cursor.try_collect().await?;
+                Ok(users)
+            }
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! implement_mongo_crud_struct {
+    ($struct_name:ident) => {
+        impl $struct_name {
+            pub async fn delete_one(&self, collection: &mongodb::Collection<$struct_name>) -> anyhow::Result<()> {
+                collection
+                    .delete_one(mongodb::bson::doc! { "id": self.id })
+                    .await?;
+                Ok(())
+            }
+
+            pub async fn delete_by_id(
+                id: i64,
+                collection: &mongodb::Collection<$struct_name>,
+            ) -> anyhow::Result<Option<$struct_name>> {
+                let deleted = collection
+                    .find_one_and_delete(mongodb::bson::doc! { "id": id })
+                    .await?;
+                Ok(deleted)
+            }
+
+            pub async fn db_upsert_mongo(
+                &self,
+                c: &mongodb::Collection<Self>,
+            ) {
+                let filter = mongodb::bson::doc! { "id": self.id };
+                let replace = mongodb::bson::to_document(self).unwrap();
+                c.update_one(filter,replace).await.unwrap();
+            }
+
+            pub async fn count(collection: &mongodb::Collection<$struct_name>) -> i64 {
+                let count = collection.count_documents(mongodb::bson::doc! {}).await.unwrap();
+                count as i64
+            }
+
+            pub async fn insert_bulk(
+                collection: &mongodb::Collection<$struct_name>,
+                data: Vec<$struct_name>,
+            ) -> anyhow::Result<()> {
+                collection.insert_many(data).await?;
+                Ok(())
+            }
+
+            pub async fn insert(&self, collection: &mongodb::Collection<$struct_name>) -> anyhow::Result<Self> {
+                collection.insert_one(self).await?;
+                Ok(self.clone())
+            }
+
+            pub async fn get_by_id(
+                id: i64,
+                collection: &mongodb::Collection<$struct_name>,
+            ) -> anyhow::Result<Option<$struct_name>> {
+                let user = collection
+                    .find_one(mongodb::bson::doc! { "id": id })
+                    .await?;
+                Ok(user)
+            }
+
+            pub async fn get_all(collection: &mongodb::Collection<$struct_name>) -> anyhow::Result<Vec<$struct_name>> {
+                use futures::TryStreamExt;
+                let mut cursor = collection.find(mongodb::bson::doc! {}).await?;
+                let users = cursor.try_collect::<Vec<_>>().await?;
                 Ok(users)
             }
         }

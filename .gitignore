@@ -21,3 +21,6 @@ Cargo.lock
 #.idea/
 
 *.exe
+/target
+.shuttle*
+Secrets*.toml

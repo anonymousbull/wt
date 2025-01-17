@@ -1,87 +1,114 @@
-use std::sync::Arc;
-use tokio::sync::Mutex;
-use wolf_trader::chan_bg::bg_chan;
-use wolf_trader::prompt_chan::{dsl_chan, export_prompt_schema};
-use wolf_trader::chan::Chan;
-use wolf_trader::cmd::{BroadcastCommand, InternalCommand};
-use wolf_trader::jito_chan::jito_chan;
-use wolf_trader::trade_chan::trade_chan;
-use wolf_trader::web_server;
-use wolf_trader::websocket_server::{start_websocket_server, WebsocketState};
+use anyhow::{Result, Context};
+use std::env;
+use std::path::Path;
+use base64::{decode, Engine};
+use cargo::Config;
+use cargo::core::Workspace;
+use cargo::ops::{compile, CompileOptions};
+use cargo::ops::Packages::Packages;
+use cargo::util::interning::InternedString;
+use ollama_rs::IntoUrlSealed;
+use tokio::process::Command;
+use tokio::time::{sleep, Duration};
+use wolf_trader::constant::BASE_64_SSH_PRIVATE_KEY;
+use wolf_trader::digitalocean_droplet::{create_digitalocean_droplet, DropletSize};
+use wolf_trader::dns_manager::{manage_dns_records, DnsRecord};
+use wolf_trader::ssh_executor::SshExecutor;
 
 #[tokio::main]
-async fn main() {
-    env_logger::Builder::from_env(env_logger::Env::new().default_filter_or("info"))
-        .format_timestamp_millis()
-        .init();
-    tokio_rustls::rustls::crypto::aws_lc_rs::default_provider().install_default().expect("Failed to install rustls crypto provider");
+async fn main() -> Result<()> {
 
-    // raydium_amm::log::decode_ray_log("Alh4A5VLFQcAWHgDlUsVBwCInOJavHfuY6VQ+YmAAAAAWEKe0EsVBwAANHZmewAAAAAAAAAAAAAAAABuZ0NaFWgAAAAAAAAAAAeCzW9zdO5j/xb1iYAAAAA=");
-    raydium_amm::log::decode_ray_log("BHh3Uvk8AAAAYCx1xzAAAAACAAAAAAAAAADh9QUAAAAAI667pxAAAACSCwf8EtAAABT66gMAAAAA");
+    let host = "femi.market";
+    let bin_name = env!("BIN_NAME");
+    let ssh_public_keys = vec![
+        env!("SSH_PUBLIC_KEY").to_string(),
+    ];
 
+    // Create the droplet and get its IP address
+    let droplet_ip = create_digitalocean_droplet(bin_name, DropletSize::Small, ssh_public_keys).await?;
+    println!("Droplet IP: {}", droplet_ip);
 
-    // let pump = "vdt/007mYe7P926dXkchooyFXXnJov3RsBPN74bgvPMGeX2iI98Gz4CWmAAAAAAAS1ceeQsAAAABqYJJd/7/sFhzhEN5QbMYeJ1RuKF1GQJPkhiNsGdGmFwMjXJnAAAAALokx9ESAAAAGibzfDRqAQC6eKPVCwAAABqO4DCjawAA";
+    // Create a DNS record for the droplet
+    manage_dns_records(host, &DnsRecord{
+        r#type:"A".to_string(),
+        name: bin_name.to_string(),
+        data: droplet_ip,
+        ttl: 30,
+    }).await?;
+    println!("DNS record created for {}.{}", bin_name, host);
 
-//     let pump = "vdt/007mYe5zR/rKvm11proPeGwoDBPsrziiklJqgWw+XokSQsxxbwV/0QAAAAAAZbO0JhUAAAAB2ds811Rj9oovAckMF5TfATd+Vf6AVd1SgpLrrhK7kS4ReHhnAAAAACq1zT0QAAAALMcuybKjAQAqCapBCQAAACwvHH0hpQAA";
-//     let bytes = base64::prelude::BASE64_STANDARD.decode(pump).unwrap();
-//     let log: PumpTradeLog = bincode::deserialize(&bytes[8..]).unwrap();
-//     println!("{:?}",log);
-//     println!("{:?} {:?}",&bytes[..8], PUMP_BUY_CODE.as_slice());
-//
-// panic!("d");
-    raydium_amm::log::decode_ray_log("BHh3Uvk8AAAAYCx1xzAAAAACAAAAAAAAAADh9QUAAAAAI667pxAAAACSCwf8EtAAABT66gMAAAAA");
-    solana_sdk::pubkey::Pubkey::from_str_const("So11111111111111111111111111111111111111112");
-    let (bg_send, bg_r) = tokio::sync::mpsc::channel::<InternalCommand>(100);
-    let (trade_send, trade_r) = tokio::sync::mpsc::channel::<InternalCommand>(500);
-    let (ws_s, ws_r) = tokio::sync::mpsc::channel::<InternalCommand>(500);
-    let (dsl_s, dsl_r) = tokio::sync::mpsc::channel::<InternalCommand>(500);
-    let (web_s, web_r) = tokio::sync::mpsc::channel::<InternalCommand>(500);
-    let (ws,_) = tokio::sync::broadcast::channel::<BroadcastCommand>(500);
-    export_prompt_schema();
-    let chan = Chan{
-        bg: bg_send,
-        trade: trade_send,
-        ws:ws.clone(),
-        dsl: dsl_s,
-    };
+    // Add a delay to ensure the droplet is ready for SSH connections
+    println!("Waiting for 30 seconds to ensure the droplet is ready...");
+    sleep(Duration::from_secs(30)).await;
 
-    tokio::spawn(async move {
-        bg_chan(bg_r).await
-    });
+    // Read and decode the private key from an environment variable
+    let private_key = base64::engine::general_purpose::STANDARD
+        .decode(BASE_64_SSH_PRIVATE_KEY)
+        .context("Failed to decode private key")?;
 
-    // tokio::spawn({
-    //     let chan = chan.clone();
-    //     async move {
-    //         jito_chan(chan).await
-    //     }
-    // });
+    let user = "root";
 
-    tokio::spawn({
-        let chan = chan.clone();
-        async move {
-            dsl_chan(chan,dsl_r).await;
+    let mut executor = SshExecutor::new(&droplet_ip, user, private_key).await?;
+    println!("SSH connection established.");
+
+    let domain = format!("{}.{}", bin_name, host); // Replace with your domain
+
+    let commands = vec![
+        "apt update",
+        "sudo apt install snapd",
+        "apt install -y software-properties-common",
+        "sudo snap install --classic certbot",
+        "sudo ln -s /snap/bin/certbot /usr/bin/certbot",
+        // Install Node.js 20 and npm
+        "curl -fsSL https://deb.nodesource.com/setup_20.x | bash -",
+        "apt install -y nodejs", // This should install both Node.js 20 and npm
+        // Verify npm installation
+        "npm -v",
+        // Install PM2
+        "npm install -g pm2",
+    ];
+
+    for command in commands {
+        match executor.execute_command(command).await {
+            Ok(output) => println!("Command executed successfully: {}\nOutput: {}", command, output),
+            Err(e) => eprintln!("Error executing command '{}': {}", command, e),
         }
-    });
+    }
 
-    tokio::spawn({
-        let chan = chan.clone();
-        async move {
-            web_server::start(chan).await;
-        }
-    });
-
-    tokio::spawn({
-        let chan = chan.clone();
-        async move {
-            trade_chan(chan,trade_r).await;
-        }
-    });
+    executor.certbot(&domain,"near@sent.com").await?;
 
 
-    start_websocket_server(Arc::new(WebsocketState{
-        chan,
-        rec: ws.clone(),
-    })).await;
+    // Run local cargo build --release
+    let output = Command::new("cargo")
+        .arg("build")
+        .arg("--release")
+        .envs(env::vars())
+        .env("PORT","443")
+        .output()
+        .await
+        .context("Failed to execute cargo build")?;
+    if output.status.success() {
+        println!("Cargo build succeeded:\n{}", String::from_utf8_lossy(&output.stdout));
+    } else {
+        panic!("Cargo build failed:\n{}", String::from_utf8_lossy(&output.stderr));
+    }
+
+    // Path to the compiled binary
+    let local_binary_path = format!("{}/target/release/{bin_name}", env!("CARGO_MANIFEST_DIR"));
+
+    // Copy the binary to the remote server
+    executor.copy_file_to_remote(&local_binary_path, bin_name).await?;
+    println!("Binary copied to remote server at {}", bin_name);
+
+    // Make the binary executable
+    let chmod = format!("chmod +x {}",bin_name);
+    executor.execute_command(&chmod).await?;
+    println!("Binary made executable");
+
+    // Start the binary using PM2
+    let pm2 = format!("pm2 start {bin_name} --name {bin_name}");
+    executor.execute_command(&pm2).await?;
+    println!("Binary started with PM2");
+
+    Ok(())
 }
-
-

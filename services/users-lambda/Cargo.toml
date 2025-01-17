@@ -1,0 +1,9 @@
+[package]
+name = "users-lambda"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+lambda_http = "0.14.0"
+users-api = { path = "../users-api" }
+tokio = { workspace = true, features = ["macros"] }

@@ -1,0 +1,27 @@
+name: Install and Run Just
+
+on:
+  workflow_dispatch: # Allows manual triggering of the workflow
+
+jobs:
+  user-api:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal # Installs only the Rust CLI tools
+          override: true
+
+      - name: Install Just
+        run: cargo install just
+
+      - name: Run Justfile
+        run: |
+          just --version
+          BIN_NAME=user-api just run

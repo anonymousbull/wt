@@ -1,0 +1,17 @@
+[package]
+name = "users-api"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axum = { workspace = true }
+serde = { workspace = true }
+mongodb = {workspace = true}
+macros = { path = "../../util/macros" }
+constant = { path = "../../util/constant" }
+anyhow = {workspace = true}
+futures = { version = "0.3" }
+reqwest = {workspace = true}
+tokio = {workspace = true}
+rustls = "0.23.21"
+axum-server = { version = "0.7", features = ["tls-rustls"] }

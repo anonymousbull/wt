@@ -1,5 +1,12 @@
 set dotenv-required
 set dotenv-load := true
+
+user-api cert key port:
+    SSL_CERT={{cert}} SSL_KEY={{key}} PORT={{port}} cargo r -r --bin user_api
+run:
+    cargo r -r --bin wolf_trader
+test name='' package='':
+    cargo test {{name}} {{package}} -- --nocapture
 pump:
     cd pump && bun start
 diesel:
@@ -30,27 +37,31 @@ serve env:
     DATABASE_UsRL=$PG_URL_{{env}} ENV={{env}} RUST_BACKTRACE=1 pm2 start --name rust -x "cargo" --interpreter none -- r -r --bin femimarket
 user-serve:
     cargo r -r --bin user_server
-rust:
-    cargo r -r --bin wolf_trader
+users-lambda:
+    cd services/users-lambda && cargo lambda build -r && cargo lambda deploy users-lambda --enable-function-url --profile AdministratorAccess-829290902012 --region eu-west-2
+shuttle-users:
+    cd services/users-api && shuttle deploy
+trade:
+    cargo r -r -p trade-engine
 rust-ws:
     ENABLE_WEBSOCKET=y RUSTFLAGS="--cfg tokio_unstable" RUST_BACKTRACE=1 cargo r -r --bin wolf_trader
-trade action coin:
+tradea action coin:
     ENABLE_WEBSOCKET=n RUSTFLAGS="--cfg tokio_unstable" RUST_BACKTRACE=1 cargo r -r --bin trade {{action}} {{coin}}
 fix:
     RUSTFLAGS="--cfg tokio_unstable" RUST_BACKTRACE=1 cargo fix
 flame env:
     RUST_BACKTRACE=1 ENV={{env}} DATABASE_URL=$PG_URL_{{env}} CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --root='--preserve-env' --bin femimarket
-run name:
+runa name:
     cargo r --bin {{name}}
 export: test wasm
 deno:
     cd serve && pm2 start --name deno -x "deno" --interpreter none -- run --allow-net --allow-env main.ts
 solana:
     cd solana && RUST_LOG=info cargo r -r
-test:
-    cargo t -r -- --nocapture && rm -rf webapp/lib/bindings && mv bindings webapp/lib/bindings
-test1:
-    RUSTFLAGS="--cfg tokio_unstable" RUST_BACKTRACE=1 cargo r -r --bin test_trade
+#test:
+#    cargo t -r -- --nocapture && rm -rf webapp/lib/bindings && mv bindings webapp/lib/bindings
+#test1:
+#    RUSTFLAGS="--cfg tokio_unstable" RUST_BACKTRACE=1 cargo r -r --bin test_trade
 add-server-deps:
     cd webserver && bun add @clerk/express
 add-ui-deps:

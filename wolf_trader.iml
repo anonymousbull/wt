@@ -8,6 +8,14 @@
       <sourceFolder url="file://$MODULE_DIR$/raydium/common/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/raydium/serum_dex/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/lambda/users-api/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/services/trade-engine/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/services/users-api/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/services/users-lambda/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/util/constant/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/util/macros/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/devops/src" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>
     <orderEntry type="inheritedJdk" />

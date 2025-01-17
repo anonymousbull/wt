@@ -32,7 +32,7 @@ use tokio::task::JoinHandle;
 use crate::chan::Chan;
 use crate::cmd::InternalCommand;
 use crate::prompt_type::BuyPrompt;
-use crate::pump;
+use crate::{implement_mongo_crud, pump};
 use crate::pump::{PumpTrade, PumpTradeData};
 use crate::solana::*;
 use crate::type_dsl::CfgPrompt;
@@ -94,6 +94,8 @@ pub struct Trade {
     /// internal trade data, null by default
     pub internal: Option<TradeInternal>
 }
+
+implement_mongo_crud!(Trade);
 
 #[derive(Clone, Debug,Serialize,Deserialize)]
 pub struct TradeInternal {
@@ -192,7 +194,7 @@ pub struct RayAmm4{
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, JsonSchema)]
 pub enum TradePool {
     /// Raydium AMM v4 mint address
-    RayAmm4Mint(#[schemars(with = "String")] Pubkey),
+    Generic(#[schemars(with = "String")] Pubkey),
     /// Pump bonding curve mint address
     PumpBondingCurveMint(#[schemars(with = "String")] Pubkey),
     #[schemars(skip)]
@@ -439,7 +441,8 @@ impl Trade {
     pub fn decimals(&self) -> i16 {
         match self.amm {
             TradePool::RayAmm4(_) => 6,
-            TradePool::PumpBondingCurve(_) => 6,
+            TradePool::PumpBondingCurve(z) => 6,
+            TradePool::Generic(_) => 6,
             _ => unreachable!()
         }
     }
@@ -449,7 +452,17 @@ impl Trade {
             TradePool::RayAmm4(ref mut z) => {
                 z.decimals = Some(decimals);
             }
-            _ => unreachable!()
+            // Default is 6 always
+            TradePool::PumpBondingCurve(ref mut z) => {
+                z.decimals = Some(decimals);
+            }
+            TradePool::Generic(_) => {
+
+            }
+            x => {
+                info!("{:?}",x);
+                unreachable!()
+            }
         }
     }
 
@@ -535,8 +548,8 @@ impl Trade {
             TradePool::PumpBondingCurve(amm) => {
                 amm.mint
             }
-            TradePool::RayAmm4Mint(mint) => mint,
-            TradePool::PumpBondingCurveMint(mint) => mint
+            TradePool::Generic(mint) => mint,
+            TradePool::PumpBondingCurveMint(mint) => mint,
         }
 
     }
@@ -739,7 +752,7 @@ impl Trade {
     pub fn build_instructions(mut self) -> Self {
         let one = dec!(1);
         let gas_limit = match self.amm {
-            TradePool::RayAmm4(_)|TradePool::RayAmm4Mint(_) => {
+            TradePool::RayAmm4(_)|TradePool::Generic(_) => {
                 if self.is_buy() {
                     self.cfg.ray_buy_gas_limit
                 } else {
@@ -961,6 +974,8 @@ impl Trade {
     }
 
     pub fn with_raydium_init(self,accounts: &[Pubkey], cfg: PositionConfig, log: String) -> anyhow::Result<Self> {
+        info!("with_raydium_init");
+
         let token_program_id = accounts[0].to_string();
         let amm = accounts[4].to_string();
         let coin_mint = accounts[8].to_string();
