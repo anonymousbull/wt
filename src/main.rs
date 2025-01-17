@@ -21,10 +21,6 @@ async fn main() -> Result<()> {
     let droplet_ip = create_digitalocean_droplet(bin_name, DropletSize::Small, ssh_public_keys).await?;
     println!("Droplet IP: {}", droplet_ip);
 
-
-    println!("Waiting for 30 seconds to ensure the droplet is ready...");
-    sleep(Duration::from_secs(30)).await;
-
     // Create a DNS record for the droplet
     manage_dns_records(host, DnsRecord{
         r#type:"A".to_string(),
@@ -54,6 +50,7 @@ async fn main() -> Result<()> {
         "apt update",
         "sudo apt install snapd",
         "apt install -y software-properties-common",
+        "sudo apt -y install libpq-dev",
         "sudo snap install --classic certbot",
         "sudo ln -s /snap/bin/certbot /usr/bin/certbot",
         // Install Node.js 20 and npm

@@ -11,5 +11,5 @@ pub struct Chan {
     // pub user: Sender<InternalCommand>,
     // pub http: tokio::sync::mpsc::UnboundedSender<InternalCommand>,
     pub trade: tokio::sync::mpsc::Sender<InternalCommand>,
-    pub ws: tokio::sync::broadcast::Sender<InternalCommand>,
+    // pub ws: tokio::sync::broadcast::Sender<InternalCommand>,
 }

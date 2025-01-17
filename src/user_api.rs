@@ -18,6 +18,15 @@ pub struct UserWithId {
     pub private_key: String,
 }
 
+impl UserWithId {
+    pub async fn get_by_private_key(col:Collection<Self>, private_key: &str) -> Option<UserWithId> {
+        let user = col
+            .find_one(mongodb::bson::doc! { "private_key": private_key })
+            .await.unwrap();
+        user
+    }
+}
+
 
 implement_mongo_crud_struct!(UserWithId);
 
