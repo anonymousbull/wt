@@ -1,13 +1,6 @@
 use anyhow::{Result, Context};
 use std::env;
-use std::path::Path;
-use base64::{decode, Engine};
-use cargo::Config;
-use cargo::core::Workspace;
-use cargo::ops::{compile, CompileOptions};
-use cargo::ops::Packages::Packages;
-use cargo::util::interning::InternedString;
-use ollama_rs::IntoUrlSealed;
+use base64::{Engine};
 use tokio::process::Command;
 use tokio::time::{sleep, Duration};
 use wolf_trader::constant::BASE_64_SSH_PRIVATE_KEY;
@@ -32,7 +25,7 @@ async fn main() -> Result<()> {
     manage_dns_records(host, &DnsRecord{
         r#type:"A".to_string(),
         name: bin_name.to_string(),
-        data: droplet_ip,
+        data: droplet_ip.clone(),
         ttl: 30,
     }).await?;
     println!("DNS record created for {}.{}", bin_name, host);

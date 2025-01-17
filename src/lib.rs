@@ -5,6 +5,7 @@ pub mod dns_manager;
 pub mod ssh_executor;
 pub mod user_api;
 pub mod db;
+pub mod amm_type;
 // pub mod trade_type;
 // pub mod trade_type;
 // pub mod position;

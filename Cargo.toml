@@ -38,7 +38,10 @@ yellowstone-grpc-proto = { version = "4.1.0" }
 clap = { version = "4.0", features = ["derive"] }
 openssh = "0.4"
 ssh2 = { version = "0.9" }
-
+diesel = { version = "2.2.6", features = ["chrono", "postgres", "serde_json"] } # no backend features need to be enabled
+diesel-async = { version = "0.5.2", features = ["postgres", "deadpool"] }
+actix-web = { version = "4.9.0" }
+actix-cors = { version = "0.7.0" }
 
 [package]
 name = "wolf_trader"
@@ -56,8 +59,8 @@ mpl-token-metadata = { workspace = true }
 spl-associated-token-account-client = { workspace = true }
 solana-account-decoder = { workspace = true }
 
-actix-web = { version = "4.9.0" }
-actix-cors = { version = "0.7.0" }
+actix-web = { workspace = true, optional = true }
+actix-cors = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["preserve_order"] }
 rust_decimal = { version = "1.36.0", features = ["db-diesel2-postgres", "maths"] }
@@ -83,9 +86,8 @@ redis-macros = { version = "0.4.2", optional = true }
 bincode = { workspace = true }
 bs58 = { workspace = true }
 base64 = { workspace = true }
-
-diesel = { version = "2.2.6", features = ["chrono", "postgres", "serde_json"] } # no backend features need to be enabled
-diesel-async = { version = "0.5.2", features = ["postgres", "deadpool"] }
+diesel = { workspace = true, features = ["chrono", "postgres", "serde_json"], optional = true } # no backend features need to be enabled
+diesel-async = { workspace = true, features = ["postgres", "deadpool"], optional = true }
 raydium_amm = { path = "raydium/amm" }
 amm-cli = { path = "raydium/amm_cli", optional = true }
 common = { path = "raydium/common", optional = true }
@@ -106,15 +108,11 @@ colored = { version = "3.0.0" }
 ollama-rs = { version = "0.2.2", features = ["function-calling"] }
 schemars = { workspace = true, features = ["rust_decimal1", "chrono04"] }
 async-openai = { version = "0.27.0" }
-
 mongodb = { workspace = true }
 axum = { workspace = true }
 tower = { version = "0.5.2" }
 rdkafka = { workspace = true, features = ["ssl"] }
-
 tower-http = { version = "0.6.2", features = ["cors"] }
-
-postgrest = { version = "1.6.0" }
 axum-server = { version = "0.7.1", features = ["tls-rustls"] }
 
 ssh2 = { workspace = true }

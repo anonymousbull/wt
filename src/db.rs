@@ -1,10 +1,11 @@
-use diesel::RunQueryDsl;
 use log::info;
 use solana_sdk::pubkey::Pubkey;
 use tokio::fs::OpenOptions;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
+#[cfg(feature = "diesel")]
 pub mod diesel_export {
+    pub use diesel::RunQueryDsl;
     pub use diesel_async::pooled_connection::deadpool::Pool;
     pub use diesel_async::pooled_connection::AsyncDieselConnectionManager;
     pub use diesel_async::pooled_connection::deadpool::Object;

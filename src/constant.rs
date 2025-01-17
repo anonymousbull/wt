@@ -1,6 +1,4 @@
-use diesel_async::pooled_connection::deadpool::Pool;
-use diesel_async::pooled_connection::AsyncDieselConnectionManager;
-use diesel_async::AsyncPgConnection;
+
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Keypair;
 use std::sync::OnceLock;
