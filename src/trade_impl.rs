@@ -1,5 +1,6 @@
 use std::cmp::{max, min};
 use std::error::Error;
+use std::fmt;
 use std::time::Duration;
 use anyhow::anyhow;
 use axum::http::StatusCode;
@@ -23,23 +24,40 @@ use solana_sdk::transaction::Transaction;
 use spl_associated_token_account_client::address::get_associated_token_address_with_program_id;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
+use raydium_amm::solana_program::instruction::{AccountMeta, Instruction};
 use raydium_amm::solana_program::native_token::LAMPORTS_PER_SOL;
 use raydium_amm::solana_program::pubkey::Pubkey;
 use crate::amm_type::{PumpBondingCurve, RayAmm4, TradePool};
-use crate::cfg_type::PositionConfig;
-use crate::chan::Chan;
-use crate::constant::{get_keypair, RAYDIUM_V4_AUTHORITY, RAYDIUM_V4_PROGRAM, SOLANA_MINT, SOLANA_MINT_STR};
-use crate::event::InternalCommand;
-use crate::instruction::TradeInstruction;
-use crate::internal::TradeInternal;
-use crate::plog::{ProgramLog, ProgramLogInfo};
+use crate::swap_config::PositionConfig;
+use crate::chan::*;
+use crate::constant::*;
+use crate::plog::*;
+
 use crate::pump;
 use crate::pump::{PumpTrade, PumpTradeData};
-use crate::rpc::{rpc1, Rpc, RpcState, RpcType, TradeRpcLog, TradeRpcLogGeneral, TradeRpcLogJito, TradeRpcLogStatus};
-use crate::solana::{lamports_per_sol_dec, micro_lamports_per_sol_dec};
-use crate::state::TradeState;
-use crate::trade::{NewTrade, Trade, TradePrice};
-use crate::transaction::TradeTransaction;
+use crate::trade::*;
+use crate::trade_cmd::InternalCommand;
+
+impl fmt::Display for Trade {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let id = self.id;
+        let state = self.state;
+        let signature = self.rpc_logs.iter().find_map(|x|{
+            x.success_signature()
+        }).map(|x|format!("https://solscan.io/tx/{x}")).unwrap();
+        let amm = match self.amm {
+            TradePool::RayAmm4(_) => {
+                unimplemented!()
+            }
+            TradePool::PumpBondingCurve(_) => {
+                format!("https://pump.fun/coin/{}",self.mint().to_string())
+            }
+            _ => unreachable!()
+        };
+        let pct = self.pct;
+        write!(f, "id={id} state={state:?} signature={signature} amm={amm} pct={pct}")
+    }
+}
 
 impl Trade {
     fn internal_error<E>(err: E) -> anyhow::Error where
@@ -162,39 +180,30 @@ impl Trade {
             error: None,
             plog: Default::default(),
             buy_out: None,
-            internal: Some(TradeInternal{
-                instructions: vec![],
-                transactions: vec![],
-                rpc_status: Default::default(),
-                rpc_logs: vec![],
-            }),
+
+            instructions: vec![],
+            transactions: vec![],
+            rpc_status: RpcState::Free,
+            rpc_logs: vec![],
         }
     }
     pub fn update_rpc_status(&mut self, status: RpcState) {
-        let mut internal = self.internal_unchecked().clone();
-        internal.rpc_status = status;
-        self.internal = Some(internal);
+        self.rpc_status = status;
     }
+
     pub fn extend_rpc_logs(&mut self, log:&Vec<TradeRpcLog>){
-        let mut internal = self.internal_unchecked().clone();
-        internal.rpc_logs.extend_from_slice(log);
-        internal.rpc_logs.dedup();
-        self.internal = Some(internal);
+        self.rpc_logs.extend_from_slice(log);
+        self.rpc_logs.dedup();
     }
     pub fn push_rpc_logs(&mut self, log:TradeRpcLog){
-        let mut internal = self.internal_unchecked().clone();
-        internal.rpc_logs.push(log);
-        internal.rpc_logs.dedup();
-        self.internal = Some(internal);
+        self.rpc_logs.push(log);
+        self.rpc_logs.dedup();
     }
+
     pub fn push_instructions(&mut self, data:TradeInstruction){
-        let mut internal = self.internal_unchecked().clone();
-        internal.instructions.push(data);
-        self.internal = Some(internal);
+        self.instructions.push(data);
     }
-    pub fn internal_unchecked(&self) -> &TradeInternal {
-        self.internal.as_ref().unwrap()
-    }
+
     pub fn try_new(
         mut self,
         new_trade: NewTrade
@@ -206,7 +215,7 @@ impl Trade {
     }
     pub fn console_log(&self) -> String {
         let mut json = json!({});
-        let success_signature = self.internal_unchecked().rpc_logs.iter().find_map(|x|
+        let success_signature = self.rpc_logs.iter().find_map(|x|
             match x {
                 TradeRpcLog::SellJito(v, TradeRpcLogStatus::Success) => Some(v.general.signature.to_string()),
                 TradeRpcLog::SellGeneral(v, TradeRpcLogStatus::Success) => Some(v.signature.to_string()),
@@ -216,7 +225,6 @@ impl Trade {
             }
         );
         let jito_tip = self
-            .internal_unchecked()
             .rpc_logs
             .iter()
             .find_map(|x| match x {
@@ -236,9 +244,8 @@ impl Trade {
         json.to_string()
     }
     pub fn signature_unchecked(&self) -> Signature {
-        self.internal_unchecked().rpc_logs.iter().find_map(|x|Some(x.signature()))
+        self.rpc_logs.iter().find_map(|x|Some(x.signature()))
             .unwrap()
-
     }
     pub fn jito_fee_sol_ui(&self) ->Decimal {
         (self.cfg.jito_tip_percent / dec!(2)) * self.cfg.fee()
@@ -258,7 +265,7 @@ impl Trade {
         } else {
             unreachable!()
         };
-        let txs = self.internal_unchecked().instructions.iter().map(|x|{
+        let txs = self.instructions.iter().map(|x|{
             match x {
                 TradeInstruction::Jito(v) => {
                     TradeTransaction::Jito(
@@ -282,7 +289,7 @@ impl Trade {
                 }
             }
         }).collect::<Vec<_>>();
-        let mut internal = self.internal_unchecked().clone();
+        let mut internal = self.clone();
         internal.transactions =txs;
 
         self.internal = Some(internal);
@@ -496,12 +503,12 @@ impl Trade {
                 info!("before you send. just tell me if you are buy {}",trade.is_buy());
                 if !trade.is_buy() {
                     info!("BIG BUG {:?}",trade);
-                    info!("BIG BUG {:?}",trade.internal_unchecked().instructions);
+                    info!("BIG BUG {:?}",trade.instructions);
                 }
-                let tx = trade.internal_unchecked().transactions.iter()
+                let tx = trade.transactions.iter()
                     .find(|&x|matches!(x, TradeTransaction::Jito(_)))
                     .unwrap().transaction().clone();
-                let ix = trade.internal_unchecked().instructions.iter()
+                let ix = trade.instructions.iter()
                     .find(|x|matches!(x, TradeInstruction::Jito(_)))
                     .unwrap().instructions().clone();
                 let serialized_tx =
@@ -560,10 +567,10 @@ impl Trade {
             Rpc::General { rpc,info } => {
                 let mut trade = self.clone();
 
-                let tx = trade.internal_unchecked().transactions.iter()
+                let tx = trade.transactions.iter()
                     .find(|x|matches!(x, TradeTransaction::General(_)))
                     .unwrap().transaction().clone();
-                let ix = trade.internal_unchecked().instructions.iter()
+                let ix = trade.instructions.iter()
                     .find(|x|matches!(x, TradeInstruction::General(_)))
                     .unwrap().instructions().clone();
 
@@ -899,5 +906,84 @@ impl Trade {
                 user_wallet:Pubkey::from_str_const(user_wallet.as_str()),
             }
         )
+    }
+}
+
+impl TradeInstruction {
+    pub fn instructions(&self)->&Vec<Instruction>{
+        match self {
+            TradeInstruction::Jito(v) => v,
+            TradeInstruction::General(v) => v
+        }
+    }
+}
+
+fn build_memo_instruction() -> Instruction {
+    let trader_apimemo_program =
+        Pubkey::from_str_const("HQ2UUt18uJqKaQFJhgV9zaTdQxUZjNrsKFgoEDquBkcx");
+    let accounts = vec![AccountMeta::new(trader_apimemo_program, false)];
+    let bx_memo_marker_msg = String::from("Powered by bloXroute Trader Api")
+        .as_bytes()
+        .to_vec();
+    Instruction {
+        program_id: trader_apimemo_program,
+        accounts,
+        data: bx_memo_marker_msg,
+    }
+}
+
+impl TradeTransaction {
+    pub fn transaction(&self) ->&Transaction{
+        match self {
+            TradeTransaction::Jito(v) => v,
+            TradeTransaction::General(v) => v
+        }
+    }
+}
+
+
+impl TradeRpcLog {
+    pub fn change_state(&mut self, signature: Signature, status:TradeRpcLogStatus){
+        match self {
+            TradeRpcLog::BuyJito(x, _) => {
+                if x.general.signature == signature.to_string() {
+                    *self = TradeRpcLog::BuyJito(x.clone(), status);
+                }
+            }
+            TradeRpcLog::SellJito(x, _) => {
+                if x.general.signature == signature.to_string() {
+                    *self = TradeRpcLog::SellJito(x.clone(), status);
+                }
+            }
+            TradeRpcLog::BuyGeneral(x, _) => {
+                if x.signature == signature.to_string() {
+                    *self = TradeRpcLog::BuyGeneral(x.clone(), status);
+                }
+            }
+            TradeRpcLog::SellGeneral(x, _) => {
+                if x.signature == signature.to_string() {
+                    *self = TradeRpcLog::SellGeneral(x.clone(), status);
+                }
+            }
+        }
+    }
+    pub fn signature(&self)->Signature{
+        let s = match self {
+            TradeRpcLog::BuyJito(v,_) => v.general.signature.to_string(),
+            TradeRpcLog::SellJito(v,_) => v.general.signature.to_string(),
+            TradeRpcLog::BuyGeneral(v,_) => v.signature.to_string(),
+            TradeRpcLog::SellGeneral(v,_) => v.signature.to_string()
+        };
+        Signature::from_str(s.as_str()).unwrap()
+    }
+    pub fn success_signature(&self)->Option<Signature>{
+        let s = match self {
+            TradeRpcLog::BuyJito(v,TradeRpcLogStatus::Success) => Some(v.general.signature.to_string()),
+            TradeRpcLog::SellJito(v,TradeRpcLogStatus::Success) => Some(v.general.signature.to_string()),
+            TradeRpcLog::BuyGeneral(v,TradeRpcLogStatus::Success) => Some(v.signature.to_string()),
+            TradeRpcLog::SellGeneral(v,TradeRpcLogStatus::Success) => Some(v.signature.to_string()),
+            _ => None
+        }.map(|x|Signature::from_str(x.as_str()).unwrap());
+        s
     }
 }

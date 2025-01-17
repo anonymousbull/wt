@@ -26,6 +26,8 @@ impl Default for DropletSize {
 }
 
 pub async fn create_digitalocean_droplet(droplet_name: &str, size: DropletSize, ssh_public_keys: Vec<String>) -> Result<String> {
+    let droplet_name = droplet_name.replace("_","-");
+    let droplet_name = droplet_name.as_str();
     let client = Client::new();
 
     // Check if the droplet already exists
