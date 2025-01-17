@@ -1,6 +1,7 @@
 use std::cmp::{max, min};
 use std::error::Error;
 use std::fmt;
+use std::str::FromStr;
 use std::time::Duration;
 use anyhow::anyhow;
 use axum::http::StatusCode;
@@ -27,16 +28,16 @@ use tokio::task::JoinHandle;
 use raydium_amm::solana_program::instruction::{AccountMeta, Instruction};
 use raydium_amm::solana_program::native_token::LAMPORTS_PER_SOL;
 use raydium_amm::solana_program::pubkey::Pubkey;
-use crate::amm_type::{PumpBondingCurve, RayAmm4, TradePool};
-use crate::swap_config::PositionConfig;
+use crate::swap_config::*;
 use crate::chan::*;
 use crate::constant::*;
 use crate::plog::*;
-
-use crate::pump;
-use crate::pump::{PumpTrade, PumpTradeData};
+use crate::pump::*;
+use crate::solana::*;
 use crate::trade::*;
-use crate::trade_cmd::InternalCommand;
+use crate::trade_cmd::*;
+use crate::trade_cmd::*;
+use crate::trade_rpc::*;
 
 impl fmt::Display for Trade {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -260,14 +261,14 @@ impl Trade {
         pfee_micro_sol
     }
     pub async fn build_transactions(mut self) ->Self{
-        let hash = if let Rpc::General {rpc:read_rpc,..} = rpc1() {
+        let hash = if let TradeRpc::General {rpc:read_rpc,..} = rpc1() {
             read_rpc.get_latest_blockhash().await.unwrap()
         } else {
             unreachable!()
         };
         let txs = self.instructions.iter().map(|x|{
             match x {
-                TradeInstruction::Jito(v) => {
+                TradeInstruction::Jito(_) => {
                     TradeTransaction::Jito(
                         Transaction::new_signed_with_payer(
                             &x.instructions().as_slice(),
@@ -277,7 +278,7 @@ impl Trade {
                         )
                     )
                 }
-                TradeInstruction::General(v) => {
+                TradeInstruction::General(_) => {
                     TradeTransaction::General(
                         Transaction::new_signed_with_payer(
                             &x.instructions().as_slice(),
@@ -289,10 +290,7 @@ impl Trade {
                 }
             }
         }).collect::<Vec<_>>();
-        let mut internal = self.clone();
-        internal.transactions =txs;
-
-        self.internal = Some(internal);
+        self.transactions = txs;
         self
     }
     pub fn is_buy(&self)->bool{
@@ -479,7 +477,7 @@ impl Trade {
             _ => unreachable!()
         }
     }
-    pub async fn send_many(mut self, rpcs: Vec<Rpc>)->FuturesUnordered<JoinHandle<Result<Trade,Trade>>>{
+    pub async fn send_many(mut self, rpcs: Vec<TradeRpc>)->FuturesUnordered<JoinHandle<Result<Trade,Trade>>>{
         let futs= FuturesUnordered::new();
         let trade = self.build_transactions().await;
         for rpc in rpcs {
@@ -492,12 +490,12 @@ impl Trade {
         }
         futs
     }
-    pub async fn send(mut self, rpc:Rpc) -> Result<Trade,Trade> {
+    pub async fn send(mut self, rpc:TradeRpc) -> Result<Trade,Trade> {
         let start_time = ::std::time::Instant::now();
         let mut log_info = None;
 
         let res = match rpc {
-            Rpc::Jito { rpc,info,.. } => {
+            TradeRpc::Jito { rpc,info,.. } => {
                 let mut trade = self.clone();
 
                 info!("before you send. just tell me if you are buy {}",trade.is_buy());
@@ -564,7 +562,7 @@ impl Trade {
                     trade
                 })
             }
-            Rpc::General { rpc,info } => {
+            TradeRpc::General { rpc,info } => {
                 let mut trade = self.clone();
 
                 let tx = trade.transactions.iter()
@@ -629,9 +627,7 @@ impl Trade {
     }
 
     pub fn rebuild_instructions(mut self) -> Self {
-        self.internal.as_mut().map(|x|{
-            x.instructions = vec![];
-        });
+        self.instructions = vec![];
 
         let one = dec!(1);
         let gas_limit = match self.amm {
@@ -783,7 +779,7 @@ impl Trade {
                 } else {
                     self.buy_out.unwrap()
                 };
-                let pump_ix = pump::trade(
+                let pump_ix = pump_swap(
                     PumpTrade {
                         data: PumpTradeData {
                             min,
@@ -858,7 +854,7 @@ impl Trade {
         self
     }
 
-    pub fn with_raydium_init(self,accounts: &[Pubkey], cfg: PositionConfig, log: String) -> anyhow::Result<Self> {
+    pub fn with_raydium_init(self,accounts: &[Pubkey], _cfg: PositionConfig, log: String) -> anyhow::Result<Self> {
         info!("with_raydium_init");
 
         let token_program_id = accounts[0].to_string();
@@ -985,5 +981,22 @@ impl TradeRpcLog {
             _ => None
         }.map(|x|Signature::from_str(x.as_str()).unwrap());
         s
+    }
+}
+
+impl TradePool {
+    pub fn to_string(&self)->String{
+        match self {
+            TradePool::RayAmm4(v) => v.amm.to_string(),
+            TradePool::PumpBondingCurve(v) => v.amm.to_string(),
+            _ => unreachable!()
+        }
+    }
+    pub fn amm(&self) ->Pubkey{
+        match self {
+            TradePool::RayAmm4(v) => v.amm,
+            TradePool::PumpBondingCurve(v) => v.amm,
+            _ => unreachable!()
+        }
     }
 }

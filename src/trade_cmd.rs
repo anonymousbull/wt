@@ -1,7 +1,6 @@
 use solana_sdk::signature::Keypair;
-use crate::decode_tx::InterestedTx;
-use crate::rpc::TipStatistics;
-use crate::trade::Trade;
+use crate::trade_chan::*;
+use crate::trade::*;
 
 #[derive(Debug)]
 pub enum InternalCommand {

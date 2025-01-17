@@ -26,66 +26,35 @@ use solana_client::rpc_config::RpcSendTransactionConfig;
 use solana_sdk::commitment_config::CommitmentLevel;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
-use crate::amm_type::TradePool;
 use crate::plog::ProgramLog;
 use crate::implement_mongo_crud_struct;
 use crate::swap_config::PositionConfig;
 use crate::trade_rpc::*;
 
 
-#[derive(Clone, Debug,Serialize,Deserialize,JsonSchema)]
+#[derive(Clone, Debug,Serialize,Deserialize)]
 pub struct Trade {
-    #[schemars(skip)]
-    /// id of trade
     pub id: i64,
-
-    #[schemars(skip)]
     pub amount: Decimal,
-    #[schemars(skip)]
-    /// buy time of trade in ISO 8601 combined date and time with time zone format
     pub buy_time: Option<DateTime<Utc>>,
-    /// buy price of trade
-    #[schemars(skip)]
     pub buy_price: Option<Decimal>,
-    #[schemars(skip)]
-    /// sell time of trade in ISO 8601 combined date and time with time zone format
     pub sell_time: Option<DateTime<Utc>>,
-    #[schemars(skip)]
     pub sell_price: Option<Decimal>,
-
-    /// pnl percentage of trade
-    #[schemars(skip)]
     pub pct: Decimal,
-    /// state of trade
     pub state: TradeState,
-
-    #[schemars(skip)]
     pub sol_before: Decimal,
-    #[schemars(skip)]
     pub sol_after: Option<Decimal>,
-    #[schemars(skip)]
     pub root_kp:Vec<u8>,
-    /// user id
     pub user_id:String,
-    /// Asset to trade
     pub amm: TradePool,
-    #[schemars(skip)]
     pub user_wallet: String,
-    #[schemars(skip)]
     pub price:Decimal,
-    #[schemars(skip)]
     pub k: Decimal,
-    #[schemars(skip)]
     pub tvl:Decimal,
-
-    /// trade configuration settings
     pub cfg: PositionConfig,
     pub error: Option<String>,
-    #[schemars(skip)]
     pub plog:ProgramLog,
-    #[schemars(skip)]
     pub buy_out: Option<u64>,
-
     pub instructions: Vec<TradeInstruction>,
     pub transactions: Vec<TradeTransaction>,
     pub rpc_status: RpcState,
@@ -95,8 +64,58 @@ pub struct Trade {
 implement_mongo_crud_struct!(Trade);
 
 
+#[derive(Clone,Copy,Serialize,Deserialize,Debug,JsonSchema)]
+pub struct PumpBondingCurve{
+    #[schemars(with = "String")]
+    pub amm:Pubkey,
+    #[schemars(with = "String")]
+    pub vault:Pubkey,
+    #[schemars(with = "String")]
+    pub mint:Pubkey,
+    /// decimal places of asset
+    pub decimals: Option<i16>,
+    /// token_program_id
+    #[schemars(with = "String")]
+    pub token_program_id: Pubkey,
+}
 
-#[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
+#[derive(Clone,Copy,Serialize,Deserialize,Debug,JsonSchema)]
+pub struct RayAmm4{
+    #[schemars(with = "String")]
+    pub amm:Pubkey,
+    #[schemars(with = "String")]
+    pub coin_vault: Pubkey,
+    #[schemars(with = "String")]
+    pub pc_vault: Pubkey,
+    #[schemars(with = "String")]
+    pub coin_mint: Pubkey,
+    #[schemars(with = "String")]
+    pub pc_mint: Pubkey,
+    /// decimal places of asset
+    pub decimals: Option<i16>,
+    /// token_program_id
+    #[schemars(with = "String")]
+    pub token_program_id: Pubkey,
+}
+
+/// Mint information, used to determine what mint to buy or sell
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, JsonSchema)]
+pub enum TradePool {
+    /// Raydium AMM v4 mint address
+    Generic(#[schemars(with = "String")] Pubkey),
+    /// Pump bonding curve mint address
+    PumpBondingCurveMint(#[schemars(with = "String")] Pubkey),
+    #[schemars(skip)]
+    /// Raydium AMM v4 object
+    RayAmm4(RayAmm4),
+    #[schemars(skip)]
+    /// Pump bonding curve object
+    PumpBondingCurve(PumpBondingCurve),
+}
+
+
+
+#[derive(Deserialize, Serialize, Clone, Debug)]
 #[serde(tag = "name", content = "arguments")]
 pub enum TradeRequest2 {
     /// Initiates a buy trade

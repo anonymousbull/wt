@@ -25,7 +25,7 @@ pub struct PumpTradeData {
 }
 
 /// this should be separated to 2 fns
-pub fn trade(
+pub fn pump_swap(
     data: PumpTrade,
     buy: bool
 ) -> Result<Instruction, ProgramError> {
