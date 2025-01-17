@@ -32,13 +32,14 @@ struct DomainRecord {
     id: u64,
 }
 
-pub async fn manage_dns_records(domain: &str, dns_record: &DnsRecord) -> Result<u64> {
+pub async fn manage_dns_records(domain: &str, mut dns_record: DnsRecord) -> Result<u64> {
+    dns_record.name = dns_record.name.replace("_","-");
     let client = Client::new();
     let do_api_key = env::var("DO_API").expect("DO_API environment variable must be set");
 
     let response = client.post(&format!("https://api.digitalocean.com/v2/domains/{}/records", domain))
         .header("Authorization", format!("Bearer {}", do_api_key))
-        .json(dns_record)
+        .json(&dns_record)
         .send()
         .await
         .map_err(|e| anyhow::anyhow!("Request error: {}", e))?

@@ -26,7 +26,7 @@ async fn main() -> Result<()> {
     sleep(Duration::from_secs(30)).await;
 
     // Create a DNS record for the droplet
-    manage_dns_records(host, &DnsRecord{
+    manage_dns_records(host, DnsRecord{
         r#type:"A".to_string(),
         name: bin_name.to_string(),
         data: droplet_ip.clone(),
