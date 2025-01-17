@@ -1,3 +1,4 @@
+use std::net::SocketAddr;
 use rust_decimal::Decimal;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -7,11 +8,14 @@ use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::post;
 use axum::{Json, Router};
+use axum_server::tls_rustls::RustlsConfig;
 use mongodb::Collection;
 use redis::aio::ConnectionManager;
 use serde_json::{json, Value};
 use solana_sdk::signature::Keypair;
+use crate::bg_chan::bg_chan;
 use crate::trade::Trade;
+use crate::trade_chan::trade_chan;
 use crate::trade_cmd::InternalCommand;
 use crate::user_api::UserWithId;
 
@@ -55,7 +59,30 @@ fn get_api_key(headers: &HeaderMap) -> Result<String,HttpErrorResponse> {
 }
 
 
-pub async fn start(chan: Chan) {
+pub async fn start(port:u16) {
+    let ssl_cert  = include_bytes!("../ssl/cert.pem").to_vec();
+    let ssl_key  = include_bytes!("../ssl/cert.key.pem").to_vec();
+    let (bg_send, bg_r) = tokio::sync::mpsc::channel::<InternalCommand>(100);
+    let (trade_send, trade_r) = tokio::sync::mpsc::channel::<InternalCommand>(500);
+    let (ws_s, ws_r) = tokio::sync::mpsc::channel::<InternalCommand>(500);
+    let (dsl_s, dsl_r) = tokio::sync::mpsc::channel::<InternalCommand>(500);
+    let (web_s, web_r) = tokio::sync::mpsc::channel::<InternalCommand>(500);
+    let chan = Chan{
+        bg: bg_send,
+        trade: trade_send,
+        dsl: dsl_s,
+    };
+
+    tokio::spawn(async move {
+        bg_chan(bg_r).await
+    });
+
+    tokio::spawn({
+        let chan = chan.clone();
+        async move {
+            trade_chan(chan,trade_r).await;
+        }
+    });
     // let cors_layer = tower_http::cors::CorsLayer::permissive();
     let mon = mongo().await;
     let mut red = redis_pool().await;
@@ -67,8 +94,12 @@ pub async fn start(chan: Chan) {
             user_db: mon.collection::<UserWithId>("users"),
             red
         });
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:4000").await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let ssl = RustlsConfig::from_pem(ssl_cert,ssl_key).await.unwrap();
+    axum_server::bind_rustls(addr, ssl)
+        .serve(app.into_make_service())
+        .await
+        .unwrap();
 }
 
 async fn buy(
