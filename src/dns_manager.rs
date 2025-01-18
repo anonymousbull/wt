@@ -2,8 +2,9 @@ use anyhow::{Result, Context};
 use reqwest::Client;
 use serde::{Serialize, Deserialize};
 use std::env;
+use tracing_subscriber::fmt::format;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize,Debug)]
 pub struct DnsRecord {
     pub r#type: String,
     pub name: String,
@@ -16,7 +17,7 @@ struct DnsRecordsResponse {
     domain_records: Vec<DomainRecord>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize,Debug)]
 struct DomainRecord {
     id: u64,
     r#type: String,
@@ -35,13 +36,14 @@ struct CreateDnsRecordResponse {
     domain_record: DomainRecord,
 }
 
-pub async fn manage_dns_records(domain: &str, mut dns_record: DnsRecord) -> Result<u64> {
+pub async fn manage_dns_records(host: &str, mut dns_record: DnsRecord) -> Result<u64> {
     dns_record.name = dns_record.name.replace("_", "-");
+    let domain = format!("{}.{host}",dns_record.name);
     let client = Client::new();
     let do_api_key = env::var("DO_API").expect("DO_API environment variable must be set");
 
     // Fetch existing DNS records
-    let response = client.get(&format!("https://api.digitalocean.com/v2/domains/{}/records", domain))
+    let response = client.get(&format!("https://api.digitalocean.com/v2/domains/{host}/records?name={domain}&type={}&per_page=100&page=1",dns_record.r#type))
         .header("Authorization", format!("Bearer {}", do_api_key))
         .send()
         .await
@@ -50,17 +52,15 @@ pub async fn manage_dns_records(domain: &str, mut dns_record: DnsRecord) -> Resu
     let records_response: DnsRecordsResponse = response.json().await.context("Failed to parse DNS records")?;
     let records = records_response.domain_records;
 
-
-
     // Check if the record already exists
     if let Some(existing_record) = records.iter().find(|record| {
-        record.r#type == dns_record.r#type && record.name == dns_record.name
+        record.r#type == dns_record.r#type && (record.name.starts_with(dns_record.name.as_str()))
     }) {
         // Update the existing record if necessary
-        if existing_record.data != dns_record.data || existing_record.ttl != dns_record.ttl {
+        if existing_record.data != dns_record.data  {
             let update_response = client.put(&format!(
                 "https://api.digitalocean.com/v2/domains/{}/records/{}",
-                domain, existing_record.id
+                host, existing_record.id
             ))
             .header("Authorization", format!("Bearer {}", do_api_key))
             .json(&dns_record)
@@ -75,11 +75,12 @@ pub async fn manage_dns_records(domain: &str, mut dns_record: DnsRecord) -> Resu
             return Ok(existing_record.id);
         }
     }
+    println!("we are exisg111");
 
     // Create a new record if it doesn't exist
     let create_response = client.post(&format!(
         "https://api.digitalocean.com/v2/domains/{}/records",
-        domain
+        host
     ))
     .header("Authorization", format!("Bearer {}", do_api_key))
     .json(&dns_record)
