@@ -78,11 +78,10 @@ impl SshExecutor {
     }
 
     pub async fn certbot(&self, domain: &str, email: &str) -> Result<(String, String)> {
+        let domain = domain.replace("_","-");
         // Run Certbot to obtain the certificates
-        let certbot_command = format!(
-            "certbot certonly --standalone -d {} --non-interactive --agree-tos -m {}",
-            domain, email
-        );
+        let certbot_command =
+            format!("certbot certonly --standalone -d {domain} --non-interactive --agree-tos -m {email}");
         let output = self.execute_command(&certbot_command).await?;
         println!("SSL Result {output}");
 
