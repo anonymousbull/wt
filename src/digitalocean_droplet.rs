@@ -58,7 +58,7 @@ pub async fn create_digitalocean_droplet(droplet_name: &str, size: DropletSize, 
         "region": "lon1", // London region
         "size": size.to_str(),
         "image": "ubuntu-24-10-x64", // Default to Ubuntu 20.04 LTS
-        "ssh_keys": vec!["44226413"], // No SSH key IDs are needed since we're using user_data
+        "ssh_keys": vec!["44955098"], // No SSH key IDs are needed since we're using user_data
         "backups": false,
         "ipv6": true,
         "user_data": null,

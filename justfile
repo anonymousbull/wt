@@ -3,8 +3,8 @@ set dotenv-load := true
 
 schema:
     cargo r -r --bin schema
-user-api cert key port:
-    SSL_CERT={{cert}} SSL_KEY={{key}} PORT={{port}} cargo r -r --bin user_api
+user-api port:
+    PORT={{port}} cargo r -r --bin user_api
 run:
     cargo r -r --bin wolf_trader
 test name='' package='':

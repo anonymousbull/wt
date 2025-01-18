@@ -14,7 +14,7 @@ Content-Type: application/json
 
 ###
 
-GET https://fmpowzsx5n3cqgmhoufynetisa0mavss.lambda-url.eu-west-2.on.aws/users
+GET https://localhost:8001
 Authorization: Bearer 65B42392BA49F3FB64AE9844BA414
 content-type: application/json
 

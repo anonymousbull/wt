@@ -15,6 +15,9 @@ use axum_server::tls_rustls::RustlsConfig;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use solana_sdk::signature::Keypair;
+use tracing_subscriber::EnvFilter;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 use crate::constant::*;
 use crate::implement_mongo_crud_struct;
 
@@ -77,6 +80,20 @@ struct ServerState {
 type HttpErrorResponse = (StatusCode,String);
 
 pub async fn start(port:u16)  {
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                // axum logs rejections from built-in extractors with the `axum::rejection`
+                // target, at `TRACE` level. `axum::rejection=trace` enables showing those events
+                format!(
+                    "{}=debug,tower_http=debug,axum::rejection=trace",
+                    env!("CARGO_CRATE_NAME")
+                )
+                    .into()
+            }),
+        )
+        .with(tracing_subscriber::fmt::layer())
+        .init();
     let ssl_cert  = include_bytes!("../ssl/fullchain.pem").to_vec();
     let ssl_key  = include_bytes!("../ssl/privkey.pem").to_vec();
     let mon = mongo().await;

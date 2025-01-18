@@ -105,7 +105,6 @@ hyper = { version = "1.5.2" }
 http-body-util = { version = "0.1.2" }
 tokio-rustls = { version = "0.26.1" }
 webpki-roots = { version = "0.26.7" }
-colored = { version = "3.0.0" }
 ollama-rs = { version = "0.2.2", features = ["function-calling"] }
 schemars = { workspace = true, features = ["rust_decimal1", "chrono04"] }
 async-openai = { version = "0.27.0" }
@@ -117,4 +116,6 @@ tower-http = { version = "0.6.2", features = ["cors"] }
 axum-server = { version = "0.7.1", features = ["tls-rustls"] }
 axum-extra = {workspace = true, features = ["typed-header"]}
 ssh2 = { workspace = true }
+tracing = {version = "0.1.41"}
+tracing-subscriber = {version = "0.3.19", features = ["env-filter"]}
 

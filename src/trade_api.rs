@@ -60,8 +60,9 @@ fn get_api_key(headers: &HeaderMap) -> Result<String,HttpErrorResponse> {
 
 
 pub async fn start(port:u16) {
-    let ssl_cert  = include_bytes!("../ssl/cert.pem").to_vec();
-    let ssl_key  = include_bytes!("../ssl/cert.key.pem").to_vec();
+    let f = kakfa_producer().await;
+    let ssl_cert  = include_bytes!("../ssl/fullchain.pem").to_vec();
+    let ssl_key  = include_bytes!("../ssl/privkey.pem").to_vec();
     let (bg_send, bg_r) = tokio::sync::mpsc::channel::<InternalCommand>(100);
     let (trade_send, trade_r) = tokio::sync::mpsc::channel::<InternalCommand>(500);
     let (ws_s, ws_r) = tokio::sync::mpsc::channel::<InternalCommand>(500);
