@@ -12,8 +12,8 @@ pub struct DnsRecord {
 }
 
 #[derive(Deserialize)]
-struct DnsRecordResponse {
-    domain_record: DomainRecord,
+struct DnsRecordsResponse {
+    domain_records: Vec<DomainRecord>,
 }
 
 #[derive(Deserialize)]
@@ -23,6 +23,16 @@ struct DomainRecord {
     name: String,
     data: String,
     ttl: u32,
+    priority: Option<u32>,
+    port: Option<u32>,
+    weight: Option<u32>,
+    flags: Option<u32>,
+    tag: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct CreateDnsRecordResponse {
+    domain_record: DomainRecord,
 }
 
 pub async fn manage_dns_records(domain: &str, mut dns_record: DnsRecord) -> Result<u64> {
@@ -37,7 +47,10 @@ pub async fn manage_dns_records(domain: &str, mut dns_record: DnsRecord) -> Resu
         .await
         .context("Failed to fetch DNS records")?;
 
-    let records: Vec<DomainRecord> = response.json().await.context("Failed to parse DNS records")?;
+    let records_response: DnsRecordsResponse = response.json().await.context("Failed to parse DNS records")?;
+    let records = records_response.domain_records;
+
+
 
     // Check if the record already exists
     if let Some(existing_record) = records.iter().find(|record| {
@@ -74,6 +87,6 @@ pub async fn manage_dns_records(domain: &str, mut dns_record: DnsRecord) -> Resu
     .await
     .context("Failed to create DNS record")?;
 
-    let record_response: DnsRecordResponse = create_response.json().await.context("Failed to parse response")?;
+    let record_response: CreateDnsRecordResponse = create_response.json().await.context("Failed to parse response")?;
     Ok(record_response.domain_record.id)
 } 
