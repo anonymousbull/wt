@@ -8,6 +8,7 @@ use std::io::{BufReader, Cursor, Read};
 use std::sync::Arc;
 use std::io::Write;
 use std::str;
+use log::info;
 
 pub struct SshExecutor {
     session: Arc<Session>,
@@ -82,7 +83,8 @@ impl SshExecutor {
             "certbot certonly --standalone -d {} --non-interactive --agree-tos -m {}",
             domain, email
         );
-        self.execute_command(&certbot_command).await?;
+        let output = self.execute_command(&certbot_command).await?;
+        println!("SSL Result {output}");
 
         // Read the fullchain.pem and privkey.pem files
         let fullchain_path = format!("/etc/letsencrypt/live/{}/fullchain.pem", domain);
@@ -99,12 +101,13 @@ impl SshExecutor {
         // Write the fullchain.pem
         let fullchain_file_path = dir_path.join(format!("fullchain.pem"));
         std::fs::write(&fullchain_file_path, &fullchain).context("Failed to write fullchain.pem")?;
-
+        // info!("fullchain={:?}",fullchain);
         // Write the privkey.pem
         let privkey_file_path = dir_path.join(format!("privkey.pem"));
         std::fs::write(&privkey_file_path, &privkey).context("Failed to write privkey.pem")?;
+        // info!("privkey={:?}",privkey);
 
-        println!("Saved ssl certificates to ./ssl folder");
+        info!("Saved ssl certificates to ./ssl folder");
 
         Ok((fullchain, privkey))
     }

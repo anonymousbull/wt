@@ -1,1 +1,42 @@
-{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"BuyPrompt","description":"Configuration to buy at current prices","type":"object","properties":{"sol_ui":{"description":"SOL amount","type":["string","number"],"pattern":"^-?[0-9]+(\\.[0-9]+)?([eE][0-9]+)?$"},"mint":{"description":"mint address","type":"string"},"tp":{"description":"Take profit percent, should be positive number","type":["string","number"],"pattern":"^-?[0-9]+(\\.[0-9]+)?([eE][0-9]+)?$"},"sl":{"description":"Stop loss percent, should be negative number","type":["string","number"],"pattern":"^-?[0-9]+(\\.[0-9]+)?([eE][0-9]+)?$"}},"required":["sol_ui","mint","tp","sl"]}
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "BuyPrompt",
+  "description": "Configuration to buy at current prices",
+  "type": "object",
+  "properties": {
+    "sol_ui": {
+      "description": "SOL amount",
+      "type": [
+        "string",
+        "number"
+      ],
+      "pattern": "^-?[0-9]+(\\.[0-9]+)?([eE][0-9]+)?$"
+    },
+    "mint": {
+      "description": "mint address",
+      "type": "string"
+    },
+    "tp": {
+      "description": "Take profit percent, should be positive number",
+      "type": [
+        "string",
+        "number"
+      ],
+      "pattern": "^-?[0-9]+(\\.[0-9]+)?([eE][0-9]+)?$"
+    },
+    "sl": {
+      "description": "Stop loss percent, should be negative number",
+      "type": [
+        "string",
+        "number"
+      ],
+      "pattern": "^-?[0-9]+(\\.[0-9]+)?([eE][0-9]+)?$"
+    }
+  },
+  "required": [
+    "sol_ui",
+    "mint",
+    "tp",
+    "sl"
+  ]
+}
