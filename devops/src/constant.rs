@@ -1,1 +1,0 @@
-pub const DO_API: &str = env!("DO_API");
