@@ -25,6 +25,9 @@ jobs:
         run: cargo install just
 
       - name: Run Justfile
+        env:
+          BASE64_ENV: ${{ secrets.BASE64_ENV }}
         run: |
           just --version
+          just env
           BIN_NAME=user_api just run

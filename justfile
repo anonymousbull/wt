@@ -1,6 +1,8 @@
 set dotenv-required := false
 set dotenv-load := true
 
+env:
+    cargo r -r --bin env
 schema:
     cargo r -r --bin schema
 user-api port:
