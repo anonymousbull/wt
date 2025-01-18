@@ -1,5 +1,5 @@
-set dotenv-required
-set dotenv-load := false
+set dotenv-required := false
+set dotenv-load := true
 
 schema:
     cargo r -r --bin schema
