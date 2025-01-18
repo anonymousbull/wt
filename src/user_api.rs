@@ -39,8 +39,8 @@ struct ServerState {
 type HttpErrorResponse = (StatusCode,String);
 
 pub async fn start(port:u16)  {
-    let ssl_cert  = include_bytes!("../ssl/cert.pem").to_vec();
-    let ssl_key  = include_bytes!("../ssl/cert.key.pem").to_vec();
+    let ssl_cert  = include_bytes!("../ssl/fullchain.pem").to_vec();
+    let ssl_key  = include_bytes!("../ssl/privkey.pem").to_vec();
     let mon = mongo().await;
     let col = mon.collection::<UserWithId>(env!("USER_COL"));
     let id = UserWithId::count(&col).await;
