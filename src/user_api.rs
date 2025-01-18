@@ -51,7 +51,7 @@ pub async fn start(port:u16)  {
             db: col,
             id: Arc::new(AtomicI64::new(id))
         });
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let addr = SocketAddr::from(([0, 0, 0, 0], port));
     let ssl = RustlsConfig::from_pem(ssl_cert,ssl_key).await.unwrap();
     axum_server::bind_rustls(addr, ssl)
         .serve(app.into_make_service())
