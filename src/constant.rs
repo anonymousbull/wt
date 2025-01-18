@@ -2,6 +2,7 @@
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Keypair;
 use std::sync::OnceLock;
+use base64::Engine;
 use mongodb::Client;
 use mongodb::options::{ClientOptions, ServerApi, ServerApiVersion};
 use rdkafka::ClientConfig;
@@ -13,12 +14,9 @@ use raydium_amm::solana_program::native_token::LAMPORTS_PER_SOL;
 
 
 
-pub const SURREAL_DB_URL: &str = env!("SURREAL_DB_URL");
 pub const BLOX_HEADER: &str = env!("BLOX_HEADER");
 pub const NEXT_BLOCK: &str = env!("NEXT_BLOCK");
 pub const BASE_64_SSH_PRIVATE_KEY: &str = env!("SSH_PRIVATE_KEY");
-pub const SSH_PUBLIC_KEY: &str = env!("SSH_PUBLIC_KEY");
-pub const DEPLOY_SSH_PUBLIC_KEY: &str = env!("DEPLOY_SSH_PUBLIC_KEY");
 
 
 
@@ -29,13 +27,6 @@ pub const PUMP_MIGRATION_PRICE:f64 = 0.0000004108264862252296;
 
 
 
-pub const USER_API_URL: &str = env!("USER_API_URL");
-
-
-pub const USER_API_KEY: &str = env!("USER_API_KEY");
-pub const SUPABASE_URL: &str = env!("SUPABASE_URL");
-pub const SUPABASE_PK: &str = env!("SUPABASE_PK");
-pub const SUPABASE_SK: &str = env!("SUPABASE_SK");
 
 pub const DO_API: &str = env!("DO_API");
 
@@ -105,8 +96,6 @@ pub const SOLANA_RENT_PROGRAM:Pubkey = Pubkey::from_str_const("SysvarRent1111111
 pub const SOLANA_SERUM_PROGRAM:Pubkey = Pubkey::from_str_const("srmqPvymJeFKQ4zGQed1GFppgkRHL9kaELCbyksJtPX");
 pub const SOLANA_ATA_PROGRAM:Pubkey = Pubkey::from_str_const("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
 pub const MONGO_URL: &str = env!("MONGO_URL");
-pub const MONGO_DB_NAME: &str = env!("MONGO_DB_NAME");
-pub const USER_COL: &str = env!("USER_COL");
 
 const MONGO_CON: tokio::sync::OnceCell<mongodb::Database> = tokio::sync::OnceCell::const_new();
 
@@ -126,6 +115,7 @@ pub async fn mongo() -> mongodb::Database {
         .clone()
 }
 const RED: tokio::sync::OnceCell<ConnectionManager> = tokio::sync::OnceCell::const_new();
+const KAFKA: tokio::sync::OnceCell<FutureProducer> = tokio::sync::OnceCell::const_new();
 
 pub async fn redis_pool() -> ConnectionManager {
     RED
@@ -137,18 +127,34 @@ pub async fn redis_pool() -> ConnectionManager {
         .clone()
 }
 
-pub fn kakfa_producer() -> FutureProducer {
-    let producer: FutureProducer = ClientConfig::new()
-        .set("bootstrap.servers", KAFKA_URL)
-        .set("security.protocol", "SSL",)
-        .set("ssl.ca.location", "ca-cert.pem")// Adjust if using a different server
-        .set("enable.ssl.certificate.verification", "false")
-        .set("ssl.key.location", "user-access-key.key") // Path to user access key
-        .set("ssl.certificate.location", "user-access-certificate.crt")
-        // .set("ssl.certificate.location", "/Users/u/wolf_trader/ca-certificate.crt")// Adjust if using a different server
-        .create()
-        .expect("Producer creation failed");
-    producer
+pub async fn kakfa_producer() -> FutureProducer {
+    KAFKA.get_or_init(|| async {
+        let user_access_key = base64::engine::general_purpose::STANDARD.decode(
+            env!("KAFKA_USER_ACCESS_KEY")
+        ).unwrap();
+        let user_access_cert = base64::engine::general_purpose::STANDARD.decode(
+            env!("KAFKA_USER_ACCESS_CERTIFICATE")
+        ).unwrap();
+        let ca = base64::engine::general_purpose::STANDARD.decode(
+            env!("KAFKA_CA")
+        ).unwrap();
+        tokio::fs::write("user-access-key.key",user_access_key).await.unwrap();
+        tokio::fs::write("user-access-certificate.crt",user_access_cert).await.unwrap();
+        tokio::fs::write("ca-cert.pem",ca).await.unwrap();
+
+        let producer: FutureProducer = ClientConfig::new()
+            .set("bootstrap.servers", KAFKA_URL)
+            .set("security.protocol", "SSL",)
+            .set("ssl.ca.location", "ca-cert.pem")// Adjust if using a different server
+            .set("enable.ssl.certificate.verification", "false")
+            .set("ssl.key.location", "user-access-key.key") // Path to user access key
+            .set("ssl.certificate.location", "user-access-certificate.crt")
+            .create()
+            .expect("Producer creation failed");
+        producer
+    })
+        .await
+        .clone()
 }
 
 

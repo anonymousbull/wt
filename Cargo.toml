@@ -36,12 +36,13 @@ schemars = { version = "1.0.0-alpha.17", features = ["rust_decimal1", "chrono04"
 yellowstone-grpc-client = { version = "4.1.0" }
 yellowstone-grpc-proto = { version = "4.1.0" }
 clap = { version = "4.0", features = ["derive"] }
-openssh = "0.4"
+openssh = {version = "0.4"}
 ssh2 = { version = "0.9" }
 diesel = { version = "2.2.6", features = ["chrono", "postgres", "serde_json"] } # no backend features need to be enabled
 diesel-async = { version = "0.5.2", features = ["postgres", "deadpool"] }
 actix-web = { version = "4.9.0" }
 actix-cors = { version = "0.7.0" }
+axum-extra = {version = "0.10.0"}
 
 [package]
 name = "wolf_trader"
@@ -114,6 +115,6 @@ tower = { version = "0.5.2" }
 rdkafka = { workspace = true, features = ["ssl"] }
 tower-http = { version = "0.6.2", features = ["cors"] }
 axum-server = { version = "0.7.1", features = ["tls-rustls"] }
-
+axum-extra = {workspace = true, features = ["typed-header"]}
 ssh2 = { workspace = true }
 

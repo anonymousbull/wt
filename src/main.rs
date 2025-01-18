@@ -13,9 +13,7 @@ async fn main() -> Result<()> {
 
     let host = "femi.market";
     let bin_name = env!("BIN_NAME");
-    let ssh_public_keys = vec![
-        env!("SSH_PUBLIC_KEY").to_string(),
-    ];
+    let ssh_public_keys = vec![];
 
     // Create the droplet and get its IP address
     let droplet_ip = create_digitalocean_droplet(bin_name, DropletSize::Small, ssh_public_keys).await?;

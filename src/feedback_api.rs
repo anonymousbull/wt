@@ -1,39 +1,31 @@
-use std::net::SocketAddr;
-use axum::extract::State;
-use axum::http::{HeaderMap, StatusCode};
-use axum::routing::{get, post};
-use axum::{Json, Router};
-use mongodb::Collection;
-use std::sync::atomic::AtomicI64;
-use std::sync::atomic::Ordering::SeqCst;
-use std::sync::Arc;
-use axum_server::tls_rustls::RustlsConfig;
-use serde::{Deserialize, Serialize};
 use crate::constant::*;
 use crate::implement_mongo_crud_struct;
+use crate::user_api::{is_admin, UserWithId};
+use axum::extract::State;
+use axum::http::{HeaderMap, StatusCode};
+use axum::routing::post;
+use axum::{Json, Router};
+use axum_extra::headers::authorization::Basic;
+use axum_extra::headers::Authorization;
+use axum_extra::TypedHeader;
+use axum_server::tls_rustls::RustlsConfig;
+use mongodb::Collection;
+use serde::{Deserialize, Serialize};
+use std::net::SocketAddr;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Feedback {
-    pub private_key: String,
+    pub id: i64,
+    pub username: String,
     pub value: String,
 }
 
-impl Feedback {
-    pub async fn get_by_private_key(col:Collection<Self>, private_key: &str) -> Option<UserWithId> {
-        let user = col
-            .find_one(mongodb::bson::doc! { "private_key": private_key })
-            .await.unwrap();
-        user
-    }
-}
-
-
-implement_mongo_crud_struct!(UserWithId);
+implement_mongo_crud_struct!(Feedback);
 
 #[derive(Clone)]
 struct ServerState {
-    pub db: Collection<UserWithId>,
-    pub id: Arc<AtomicI64>
+    pub user_db: Collection<UserWithId>,
+    pub feedback_db: Collection<Feedback>,
 }
 
 type HttpErrorResponse = (StatusCode,String);
@@ -42,14 +34,12 @@ pub async fn start(port:u16)  {
     let ssl_cert  = include_bytes!("../ssl/fullchain.pem").to_vec();
     let ssl_key  = include_bytes!("../ssl/privkey.pem").to_vec();
     let mon = mongo().await;
-    let col = mon.collection::<UserWithId>(env!("USER_COL"));
-    let id = UserWithId::count(&col).await;
+    let feedback_db = mon.collection::<Feedback>("feedbacks");
     let app = Router::new()
-        .route("/users", post(create_user).get(get_users))
-        .route("/users/{id}", get(get_user).delete(delete_user))
+        .route("/feedbacks", post(create).get(get_route))
         .with_state(ServerState {
-            db: col,
-            id: Arc::new(AtomicI64::new(id))
+            feedback_db,
+            user_db: mon.collection::<UserWithId>("users"),
         });
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     let ssl = RustlsConfig::from_pem(ssl_cert,ssl_key).await.unwrap();
@@ -59,88 +49,34 @@ pub async fn start(port:u16)  {
         .unwrap();
 }
 
-async fn load_ssl(env_var: Vec<u8>, a:Vec<u8>) -> RustlsConfig {
-    let config = RustlsConfig::from_pem(
-        env_var,
-        a
-    ).await.unwrap();
-    config
-}
-
-
-fn is_admin(headers: &HeaderMap) -> Result<(),HttpErrorResponse> {
-    let mut auth = false;
-    if let Some(auth_header) = headers.get("x-api-key") {
-        if let Ok(api_key) = auth_header.to_str() {
-            if api_key == USER_API_KEY {
-                auth = true;
-            }
-        }
-    }
-    if auth == false {
-        Err((StatusCode::UNAUTHORIZED,"Unauthorized".to_string()))
+async fn create(
+    TypedHeader(auth): TypedHeader<Authorization<Basic>>,
+    State(state): State<ServerState>,
+    Json(mut payload): Json<Feedback>,
+) -> Result<Json<Feedback>, HttpErrorResponse> {
+    let user = UserWithId::get_by_user_name(&state.user_db, auth.username())
+        .await
+        .ok_or(internal_error("unknown user"))?;
+    if user.password == auth.password() {
+        payload.username = user.username;
+        let feedback = payload.insert(&state.feedback_db)
+            .await
+            .map(|x| Json(x))
+            .map_err(internal_error)?;
+        Ok(feedback)
     } else {
-        Ok(())
+        Err(internal_error("invalid credentials"))
     }
 }
 
-
-async fn create_user(
-    headers: HeaderMap,
-    State(state): State<ServerState>,
-    Json(mut payload): Json<UserWithId>,
-) -> Result<Json<UserWithId>, HttpErrorResponse> {
-    is_admin(&headers)?;
-
-
-    let c = state.db;
-    payload.id = state.id.load(SeqCst)+1;
-    let user = payload.insert(&c)
-        .await
-        .map(|x| Json(x))
-        .map_err(internal_error)?;
-    state.id.fetch_add(1, SeqCst);
-    Ok(user)
-}
-
-async fn get_users(
-    headers: HeaderMap,
+async fn get_route(
+    TypedHeader(auth): TypedHeader<Authorization<Basic>>,
     State(state): State<ServerState>
-) -> Result<Json<Vec<UserWithId>>,HttpErrorResponse> {
-    is_admin(&headers)?;
-    let c = state.db;
-    Ok(Json(UserWithId::get_all(&c).await.unwrap()))
+) -> Result<Json<Vec<Feedback>>,HttpErrorResponse> {
+    is_admin(auth,&state.user_db).await?;
+    let c = state.feedback_db;
+    Ok(Json(Feedback::get_all(&c).await.unwrap()))
 }
-
-async fn get_user(
-    headers: HeaderMap,
-    State(state): State<ServerState>,
-    axum::extract::Path(id): axum::extract::Path<i64>,
-) -> Result<Json<UserWithId>,HttpErrorResponse> {
-    is_admin(&headers)?;
-    let c = state.db;
-    UserWithId::get_by_id(id,&c)
-        .await
-        .map_err(internal_error)?
-        .map(|x| Json(x))
-        .ok_or((StatusCode::NOT_FOUND,"User not found".to_string()))
-}
-
-// Handler to delete a user by ID
-async fn delete_user(
-    headers: HeaderMap,
-    State(state): State<ServerState>,
-    axum::extract::Path(id): axum::extract::Path<i64>,
-) -> Result<Json<UserWithId>,HttpErrorResponse> {
-    is_admin(&headers)?;
-    let c = state.db;
-    UserWithId::delete_by_id(id,&c)
-        .await
-        .map_err(internal_error)?
-        .ok_or((StatusCode::NOT_FOUND,"User not found".to_string()))
-        .map(|x| Json(x))
-}
-
 
 /// Utility function for mapping any error into a `500 Internal Server Error`
 /// response.

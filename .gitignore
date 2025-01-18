@@ -24,3 +24,11 @@ Cargo.lock
 /target
 .shuttle*
 Secrets*.toml
+
+.env
+*.env
+*.pem
+*.crt
+*.key
+
+ssl
