@@ -68,7 +68,7 @@ pub async fn trade_chan(chan: Chan, mut rec: Receiver<InternalCommand>) {
     let mut heartbeat = Instant::now();
     let m = mongo().await;
     let red = redis_pool().await;
-    let k = kakfa_producer();
+    let k = kakfa_producer().await;
     let c = m.collection::<Trade>("trades");
     let max_positions = 1;
     let mut price_id = 0;
