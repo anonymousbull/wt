@@ -123,29 +123,33 @@ async fn buy(
     Ok(Json(json!({"id":id})))
 }
 
+/// Returns 200 - private_key on signup
+/// Returns 200 - empty private_key on login success
 async fn login(
+    TypedHeader(auth): TypedHeader<Authorization<Basic>>,
     State(state): State<ServerState>,
-    Json(mut payload): Json<UserWithId>,
 ) -> Result<Json<UserWithId>, HttpErrorResponse> {
-    let user = UserWithId::get_by_user_name(&state.user_db,&payload.username).await;
+    let user = get_user_from_auth(auth.clone(),&state.user_db).await;
     match user {
-        None => {
+        Ok(mut user) => {
+            user.private_key.clear();
+            Ok(Json(user))
+        }
+        Err(_) => {
             let kp = Keypair::new();
-            payload.private_key = kp.to_base58_string();
-            payload.id = state.id.load(SeqCst)+1;
-            let user = payload.insert(&state.user_db)
+            let mut user = UserWithId{
+                id: state.id.load(SeqCst)+1,
+                private_key: kp.to_base58_string(),
+                username: auth.username().to_string(),
+                password: auth.password().to_string(),
+                admin: false,
+            };
+            let user = user.insert(&state.user_db)
                 .await
                 .map(|x| Json(x))
                 .map_err(internal_error)?;
             state.id.fetch_add(1, SeqCst);
             Ok(user)
-        }
-        Some(user) => {
-            if user.password == payload.password {
-                Ok(Json(user))
-            } else {
-                Err(internal_error(anyhow!("invalid credentials")))
-            }
         }
     }
 }
