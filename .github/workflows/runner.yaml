@@ -30,4 +30,4 @@ jobs:
         run: |
           just --version
           just env
-          BIN_NAME=user_api just run
+          BIN_NAME=api just run
