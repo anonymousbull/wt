@@ -20,13 +20,13 @@ content-type: application/json
 
 ###
 
-POST localhost:4000/buy
+POST https://localhost:8001/buy
 Content-Type: application/json
 
 {
-  "kp": "65fKKEPAf8CUUmbtTAaLudPXHW8ZigaDRFE3cdbQSgy7WdSNZv3eWfXChvLSM8NfSfxteLAFesbLa7FksNG6zwDu",
+  "kp": "",
   "sol_ui": 0.01,
-  "mint": "6tZNU9395v9Gm3JQeAcbLAte4uLJnDMavPdwo9HTpump",
+  "mint": "9N3FrUVUCPXSbqAdAffYP79sGS5wp3rU7V4XLQQCpump",
   "tp": 0.01,
   "sl": -0.01
 }

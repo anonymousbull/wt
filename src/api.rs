@@ -104,18 +104,15 @@ pub async fn start(port:u16)  {
 }
 
 async fn buy(
+    TypedHeader(auth): TypedHeader<Authorization<Basic>>,
     State(mut state): State<ServerState>,
     Json(payload): Json<BuyPrompt>,
 ) -> Result<Json<Value>,HttpErrorResponse> {
-
-    let kp = UserWithId::get_by_private_key(&state.user_db, payload.kp.as_str()).await.ok_or(
-        (StatusCode::NOT_FOUND,"Not Found".to_string())
-    ).map(|x|Keypair::from_base58_string(x.private_key.as_str()))?;
-
+    let user = get_user_from_auth(auth,&state.user_db).await?;
+    let kp = Keypair::from_base58_string(user.private_key.as_str());
     let mut mint = Trade::db_get_mint_red(&mut state.red, payload.mint.as_str())
         .await
         .map_err(internal_error)?;
-
     mint.root_kp = kp.to_bytes().to_vec();
     mint.cfg.tp = payload.tp;
     mint.cfg.sl = payload.sl;
@@ -125,32 +122,6 @@ async fn buy(
     state.chan.trade.try_send(InternalCommand::SwapRequest(mint)).unwrap();
     Ok(Json(json!({"id":id})))
 }
-
-
-pub async fn is_admin(
-    auth: Authorization<Basic>,
-    state:&Collection<UserWithId>,
-) -> Result<(),HttpErrorResponse> {
-    let user = UserWithId::get_by_user_name(&state, auth.username())
-        .await;
-    match user {
-        None => Err(internal_error("unauthorised")),
-        Some(user) => {
-            if user.password == auth.password() {
-                Ok(())
-            } else {
-                Err(internal_error("unauthorised"))
-            }
-        }
-    }
-}
-
-
-
-
-type HttpErrorResponse = (StatusCode,String);
-
-
 
 async fn login(
     State(state): State<ServerState>,
@@ -257,3 +228,32 @@ where
 }
 
 
+
+async fn is_admin(
+    auth: Authorization<Basic>,
+    state:&Collection<UserWithId>,
+) -> Result<UserWithId,HttpErrorResponse> {
+    let a = get_user_from_auth(auth,state).await
+        .and_then(|x|if x.admin {Ok(x)} else {Err(internal_error("unauthorised"))});
+    a
+}
+
+async fn get_user_from_auth(
+    auth: Authorization<Basic>,
+    state:&Collection<UserWithId>,
+) -> Result<UserWithId,HttpErrorResponse> {
+    let user = UserWithId::get_by_user_name(&state, auth.username())
+        .await;
+    match user {
+        None => Err(internal_error("unauthorised")),
+        Some(user) => {
+            if user.password == auth.password() {
+                Ok(user)
+            } else {
+                Err(internal_error("unauthorised"))
+            }
+        }
+    }
+}
+
+type HttpErrorResponse = (StatusCode,String);
