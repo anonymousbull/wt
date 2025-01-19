@@ -530,17 +530,17 @@ impl Trade {
                     "skipPreflight": true
                 });
                 // if self.is_buy() == false {
-                    if let TradeRpc::General {rpc,..} = rpc1() {
-                        info!("what is going on");
-                        rpc.send_transaction_with_config(&tx, solana_client::rpc_config::RpcSendTransactionConfig {
-                            skip_preflight: false,
-                            preflight_commitment: Some(solana_sdk::commitment_config::CommitmentLevel::Processed),
-                            encoding: None,
-                            max_retries: None,
-                            min_context_slot: None,
-                        }).await.unwrap();
-                        panic!("go go");
-                    }
+                //     if let TradeRpc::General {rpc,..} = rpc1() {
+                //         info!("what is going on");
+                //         rpc.send_transaction_with_config(&tx, solana_client::rpc_config::RpcSendTransactionConfig {
+                //             skip_preflight: false,
+                //             preflight_commitment: Some(solana_sdk::commitment_config::CommitmentLevel::Processed),
+                //             encoding: None,
+                //             max_retries: None,
+                //             min_context_slot: None,
+                //         }).await.unwrap();
+                //         panic!("go go");
+                //     }
                 // }
 
                 let resp = rpc.send_txn(Some(params), true).await.unwrap();

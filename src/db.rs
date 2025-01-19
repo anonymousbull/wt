@@ -324,8 +324,10 @@ macro_rules! implement_mongo_crud_struct {
                 c: &mongodb::Collection<Self>,
             ) {
                 let filter = mongodb::bson::doc! { "id": self.id };
-                let replace = mongodb::bson::to_document(self).unwrap();
-                c.update_one(filter,replace).await.unwrap();
+                let replace = mongodb::bson::doc! {
+                    "$set": mongodb::bson::to_document(self).unwrap(),
+                };
+                c.update_one(filter,replace).upsert(true).await.unwrap();
             }
 
             pub async fn count(collection: &mongodb::Collection<$struct_name>) -> i64 {

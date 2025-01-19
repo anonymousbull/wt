@@ -174,7 +174,7 @@ pub async fn trade_chan(chan: Chan, mut rec: Receiver<InternalCommand>) {
                     Err(mut update) => {
                         let mut trade = db.get_by_trade(&update).unwrap().clone();
                         trade.extend_rpc_logs(&update.rpc_logs);
-
+                        trade.error = update.error.clone();
                         db.upsert(&update);
 
                         // pro version will have this
