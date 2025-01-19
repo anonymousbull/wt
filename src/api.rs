@@ -145,6 +145,7 @@ async fn login(
                 password: auth.password().to_string(),
                 admin: false,
             };
+            println!("{:?}",user);
             let user = user.insert(&state.user_db)
                 .await
                 .map(|x| Json(x))

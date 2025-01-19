@@ -5,15 +5,10 @@ use crate::implement_mongo_crud_struct;
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct UserWithId {
-    #[schemars(skip)]
     pub id: i64,
-    #[schemars(rename = "wallet_key")]
     pub private_key: String,
-    #[serde(skip)]
     pub username: String,
-    #[serde(skip)]
     pub password: String,
-    #[serde(skip)]
     pub admin:bool
 }
 
