@@ -84,6 +84,7 @@ pub async fn start(port:u16)  {
     let app = Router::new()
         .route("/users", post(login).get(get_users))
         .route("/users/{id}", get(get_user).delete(delete_user))
+        .route("/trades/{id}", get(get_trade))
         .route("/buy", post(buy))
         .route("/feedbacks", post(create_feedback).get(get_feedbacks))
         .with_state(ServerState {
@@ -121,7 +122,7 @@ async fn buy(
     let id = Trade::db_id_inc_red(&mut state.red).await;
     mint.id = id;
     state.chan.trade.try_send(InternalCommand::SwapRequest(mint)).unwrap();
-    Ok(Json(json!({"id":id})))
+    Ok(Json(json!({"trade_id":id})))
 }
 
 /// Returns 200 - private_key on signup
@@ -177,6 +178,37 @@ async fn get_user(
         .map_err(internal_error)?
         .map(|x| Json(x))
         .ok_or((StatusCode::NOT_FOUND,"User not found".to_string()))
+}
+
+async fn get_trade(
+    TypedHeader(auth): TypedHeader<Authorization<Basic>>,
+    State(state): State<ServerState>,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+) -> Result<Json<Value>,HttpErrorResponse> {
+    let kp = get_user_from_auth(auth,&state.user_db)
+        .await
+        .map(|x|Keypair::from_base58_string(&x.private_key))?;
+    let trade = Trade::db_get_by_id_and_kp_mongo(&state.trade_db,id,kp.to_bytes().to_vec())
+        .await
+        .ok_or(internal_error("unknown trade"))?;
+    if trade.state == TradeState::BuySuccess {
+        let sig = trade.signature_unchecked();
+        Ok(
+            Json(
+                json!({
+                    "signature":sig.to_string()
+                })
+            )
+        )
+    } else {
+        Ok(
+            Json(
+                json!({
+                    "signature":null
+                })
+            )
+        )
+    }
 }
 
 // Handler to delete a user by ID

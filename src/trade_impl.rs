@@ -9,8 +9,8 @@ use base64::Engine;
 use futures::stream::FuturesUnordered;
 use futures::TryStreamExt;
 use log::info;
-use mongodb::bson;
-use mongodb::bson::doc;
+use mongodb::{bson, Collection};
+use mongodb::bson::{doc, Binary};
 use redis::aio::ConnectionManager;
 use redis::AsyncCommands;
 use rust_decimal::{Decimal, MathematicalOps};
@@ -61,6 +61,7 @@ impl fmt::Display for Trade {
 }
 
 impl Trade {
+
     fn internal_error<E>(err: E) -> anyhow::Error where
         E: Error + Send + Sync + 'static,
     {
@@ -76,6 +77,16 @@ impl Trade {
         use redis::AsyncCommands;
         let incremented_value = c.incr::<&str,i64,i64>("trade_id", 1).await.unwrap();
         incremented_value
+    }
+    pub async fn db_get_by_id_and_kp_mongo(c: &Collection<Self>, id:i64, kp:Vec<u8>) -> Option<Self> {
+        let binary_data = Binary {
+            subtype: bson::spec::BinarySubtype::Generic,
+            bytes: kp,
+        };
+        c.find_one(doc! {
+            "id":id,
+            "kp": binary_data
+        }).await.unwrap()
     }
     pub async fn db_get_mint_red(c: &mut ConnectionManager,mint:&str) -> anyhow::Result<Self> {
         use redis::AsyncCommands;
@@ -247,6 +258,9 @@ impl Trade {
     pub fn signature_unchecked(&self) -> Signature {
         self.rpc_logs.iter().find_map(|x|Some(x.signature()))
             .unwrap()
+    }
+    pub fn signature(&self) -> Option<Signature> {
+        self.rpc_logs.iter().find_map(|x|Some(x.signature()))
     }
     pub fn jito_fee_sol_ui(&self) ->Decimal {
         (self.cfg.jito_tip_percent / dec!(2)) * self.cfg.fee()
