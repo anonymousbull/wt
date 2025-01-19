@@ -80,7 +80,7 @@ pub async fn start(port:u16)  {
         }
     });
 
-
+    let cors_layer = tower_http::cors::CorsLayer::permissive();
     let app = Router::new()
         .route("/users", post(login).get(get_users))
         .route("/users/{id}", get(get_user).delete(delete_user))
@@ -93,7 +93,8 @@ pub async fn start(port:u16)  {
             user_db: mon.collection::<UserWithId>("users"),
             feedback_db: mon.collection::<Feedback>("feedbacks"),
             red
-        });
+        })
+        .layer(cors_layer);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     let ssl = RustlsConfig::from_pem(ssl_cert,ssl_key).await.unwrap();
