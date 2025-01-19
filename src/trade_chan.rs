@@ -171,16 +171,17 @@ pub async fn trade_chan(chan: Chan, mut rec: Receiver<InternalCommand>) {
                             },
                         );
                     }
-                    Err(mut new_trade) => {
-                        let mut old_trade = db.get_by_trade(&new_trade).unwrap().clone();
-                        old_trade.extend_rpc_logs(&new_trade.rpc_logs);
+                    Err(mut update) => {
+                        let mut trade = db.get_by_trade(&update).unwrap().clone();
+                        trade.extend_rpc_logs(&update.rpc_logs);
 
-                        db.upsert(&new_trade);
+                        db.upsert(&update);
 
                         // pro version will have this
-                        if new_trade.rpc_logs.len() == rpc_len {
-                            db.remove(&new_trade);
-                            error!("{:?}", new_trade.console_log());
+                        if trade.rpc_logs.len() == rpc_len {
+                            db.remove(&update);
+                            chan.bg.try_send(InternalCommand::TradeConfirmation(trade)).unwrap();
+                            error!("{:?}", update.console_log());
                         }
                     }
                 },
