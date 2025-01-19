@@ -8,6 +8,11 @@ pub struct Feedback {
     pub value: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FeedbackCreateDto {
+    pub value: String,
+}
+
 implement_mongo_crud_struct!(Feedback);
 
 

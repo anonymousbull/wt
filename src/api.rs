@@ -24,7 +24,7 @@ use std::sync::atomic::Ordering::SeqCst;
 use std::sync::Arc;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
-use crate::feedback::Feedback;
+use crate::feedback::{Feedback, FeedbackCreateDto};
 
 #[derive(Clone)]
 struct ServerState {
@@ -33,7 +33,7 @@ struct ServerState {
     pub user_db: Collection<UserWithId>,
     pub feedback_db: Collection<Feedback>,
     pub red:ConnectionManager,
-    pub id: Arc<AtomicI64>
+    pub id: Arc<AtomicI64>,
 }
 
 pub async fn start(port:u16)  {
@@ -195,21 +195,19 @@ async fn delete_user(
 async fn create_feedback(
     TypedHeader(auth): TypedHeader<Authorization<Basic>>,
     State(state): State<ServerState>,
-    Json(mut payload): Json<Feedback>,
+    Json(mut payload): Json<FeedbackCreateDto>,
 ) -> Result<Json<Feedback>, HttpErrorResponse> {
-    let user = UserWithId::get_by_user_name(&state.user_db, auth.username())
+    let user = get_user_from_auth(auth,&state.user_db).await?;
+    let feedback = Feedback {
+        id:0,
+        username:user.username,
+        value:payload.value
+    };
+    let feedback = feedback.insert(&state.feedback_db)
         .await
-        .ok_or(internal_error("unknown user"))?;
-    if user.password == auth.password() {
-        payload.username = user.username;
-        let feedback = payload.insert(&state.feedback_db)
-            .await
-            .map(|x| Json(x))
-            .map_err(internal_error)?;
-        Ok(feedback)
-    } else {
-        Err(internal_error("invalid credentials"))
-    }
+        .map(|x| Json(x))
+        .map_err(internal_error)?;
+    Ok(feedback)
 }
 
 async fn get_feedbacks(
