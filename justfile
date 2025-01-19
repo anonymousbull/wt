@@ -5,8 +5,8 @@ env:
     cargo r -r -p users-api
 schema:
     cargo r -r --bin schema
-user-api port:
-    PORT={{port}} cargo r -r --bin user_api
+api port:
+    PORT={{port}} cargo r -r --bin api
 run:
     cargo r -r --bin wolf_trader
 test name='' package='':

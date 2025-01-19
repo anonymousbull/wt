@@ -1,5 +1,5 @@
 use schemars::schema_for;
-use wolf_trader::trade_api::BuyPrompt;
+use wolf_trader::trade::*;
 
 fn main() {
     let schema = schema_for!(BuyPrompt);

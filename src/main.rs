@@ -16,7 +16,7 @@ async fn main() -> Result<()> {
     let ssh_public_keys = vec![];
 
     // Create the droplet and get its IP address
-    let droplet_ip = create_digitalocean_droplet(bin_name, DropletSize::Small, ssh_public_keys).await?;
+    let droplet_ip = create_digitalocean_droplet(bin_name, DropletSize::Medium, ssh_public_keys).await?;
     println!("Droplet IP: {}", droplet_ip);
 
     // Create a DNS record for the droplet

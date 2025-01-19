@@ -7,7 +7,7 @@ pub struct Chan {
     // pub pa: Sender<InternalCommand>,
     // pub app: tokio::sync::mpsc::UnboundedSender<InternalCommand>,
     pub bg: tokio::sync::mpsc::Sender<InternalCommand>,
-    pub dsl: tokio::sync::mpsc::Sender<InternalCommand>,
+    // pub dsl: tokio::sync::mpsc::Sender<InternalCommand>,
     // pub user: Sender<InternalCommand>,
     // pub http: tokio::sync::mpsc::UnboundedSender<InternalCommand>,
     pub trade: tokio::sync::mpsc::Sender<InternalCommand>,

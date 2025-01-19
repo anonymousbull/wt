@@ -9,12 +9,14 @@ use crate::digitalocean_droplet_utils::get_droplet_id_by_name;
 
 pub enum DropletSize {
     Small,
+    Medium
 }
 
 impl DropletSize {
     pub fn to_str(&self) -> &str {
         match self {
             DropletSize::Small => "s-1vcpu-1gb",
+            DropletSize::Medium => "s-2vcpu-4gb",
         }
     }
 }

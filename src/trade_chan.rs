@@ -115,7 +115,6 @@ pub async fn trade_chan(chan: Chan, mut rec: Receiver<InternalCommand>) {
     // let mut ignore_mints = get_ignore_mints().await;
     let mut c = geyser.connect().await.unwrap();
     info!("connected to geyser");
-
     tokio::time::sleep(Duration::from_secs(5)).await;
     let r = SubscribeRequest {
         commitment: Some(i32::from(CommitmentLevel::Processed)),
