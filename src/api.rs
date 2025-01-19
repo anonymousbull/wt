@@ -188,6 +188,7 @@ async fn get_trade(
     let kp = get_user_from_auth(auth,&state.user_db)
         .await
         .map(|x|Keypair::from_base58_string(&x.private_key))?;
+
     let trade = Trade::db_get_by_id_and_kp_mongo(&state.trade_db,id,kp.to_bytes().to_vec())
         .await
         .ok_or(internal_error("unknown trade"))?;

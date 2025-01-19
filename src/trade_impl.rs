@@ -79,13 +79,14 @@ impl Trade {
         incremented_value
     }
     pub async fn db_get_by_id_and_kp_mongo(c: &Collection<Self>, id:i64, kp:Vec<u8>) -> Option<Self> {
-        let binary_data = Binary {
-            subtype: bson::spec::BinarySubtype::Generic,
-            bytes: kp,
-        };
+        // let binary_data = Binary {
+        //     subtype: bson::spec::BinarySubtype::Generic,
+        //     bytes: kp,
+        // };
+        let d= mongodb::bson::to_bson(&kp).unwrap();
         c.find_one(doc! {
             "id":id,
-            "kp": binary_data
+            "root_kp": doc! {"$all": d }
         }).await.unwrap()
     }
     pub async fn db_get_mint_red(c: &mut ConnectionManager,mint:&str) -> anyhow::Result<Self> {
